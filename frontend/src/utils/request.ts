@@ -227,6 +227,14 @@ export async function getDown(url: string) {
   return res
 }
 
+/** 拉取二进制（如 PPT 预览 PDF），可设较长超时 */
+export function getBlob(url: string, timeoutMs = 120000) {
+  return instance.get(url, {
+    responseType: 'blob',
+    timeout: timeoutMs,
+  })
+}
+
 export function postUpload(url: string, data = {}, onUploadProgress?: (progressEvent: any) => void) {
   return instance.post(url, data, {
     headers: {

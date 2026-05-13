@@ -1,0 +1,68 @@
+# syntax=docker/dockerfile:1.6
+# =====================================================================
+# PPTAgent Bridge 镜像
+# 提供 WeKnora 调用的 HTTP 网关 + 内置 PPTAgent 生成能力
+# =====================================================================
+
+FROM python:3.11-slim AS base
+
+ARG APT_MIRROR=""
+ARG PIP_INDEX_URL="https://pypi.org/simple"
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DEFAULT_TIMEOUT=120 \
+    PIP_INDEX_URL=${PIP_INDEX_URL}
+
+WORKDIR /opt/pptagent
+
+# 系统依赖（PPTAgent 解析 PDF/Office 等需要）
+RUN if [ -n "${APT_MIRROR}" ]; then \
+        sed -i "s@deb.debian.org@${APT_MIRROR}@g" /etc/apt/sources.list.d/debian.sources || true; \
+    fi && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        build-essential \
+        curl \
+        ca-certificates \
+        libxml2 \
+        libxslt1.1 \
+        libjpeg62-turbo \
+        libpng16-16 \
+        libgomp1 \
+        libreoffice-core \
+        libreoffice-writer \
+        libreoffice-impress \
+        libreoffice-calc \
+        fontconfig \
+        fonts-noto-cjk \
+        fonts-noto-color-emoji \
+        poppler-utils && \
+    rm -rf /var/lib/apt/lists/*
+
+# 先把 PPTAgent 源码与 bridge 源码拷入镜像
+COPY integrations/PPTAgent /opt/PPTAgent
+COPY integrations/pptagent_bridge /opt/pptagent_bridge
+
+# 安装 PPTAgent（editable 安装，便于以后挂载源码热重载）
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir -e /opt/PPTAgent && \
+    pip install --no-cache-dir -r /opt/pptagent_bridge/requirements.txt
+
+# 把 bridge 包加入 Python 搜索路径
+ENV PYTHONPATH=/opt:/opt/PPTAgent
+
+# 默认工作区（生成的 PPT、临时文件都会在这里）
+# HF_HOME：Hugging Face 缓存目录，与 docker-compose 中 pptagent-hf-cache 卷对应，避免冷启动反复拉模型
+ENV HF_HOME=/data/huggingface
+RUN mkdir -p /data/pptagent /data/huggingface
+VOLUME ["/data/pptagent", "/data/huggingface"]
+
+EXPOSE 8090
+
+# 健康检查：调用 /health 接口
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=60s \
+    CMD curl -fsS http://127.0.0.1:8090/health || exit 1
+
+CMD ["python", "-m", "pptagent_bridge"]

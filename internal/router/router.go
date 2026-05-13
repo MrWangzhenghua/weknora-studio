@@ -69,6 +69,7 @@ type RouterParams struct {
 	DataSourceHandler        *handler.DataSourceHandler
 	WeKnoraCloudHandler      *handler.WeKnoraCloudHandler
 	WikiPageHandler          *handler.WikiPageHandler
+	PPTGenHandler            *handler.PPTGenHandler
 }
 
 // NewRouter 创建新的路由
@@ -162,6 +163,7 @@ func NewRouter(params RouterParams) *gin.Engine {
 		RegisterWeKnoraCloudRoutes(v1, params.WeKnoraCloudHandler)
 		RegisterWikiPageRoutes(v1, params.WikiPageHandler)
 		RegisterChunkerDebugRoutes(v1)
+		RegisterPPTGenRoutes(v1, params.PPTGenHandler)
 	}
 
 	return r
@@ -171,6 +173,33 @@ func NewRouter(params RouterParams) *gin.Engine {
 // used by the KB editor's debug panel. Stateless — uses no service deps.
 func RegisterChunkerDebugRoutes(r *gin.RouterGroup) {
 	r.POST("/chunker/preview", handler.PreviewChunking)
+}
+
+// RegisterPPTGenRoutes 注册 "PPT 生成" 相关路由。
+// 路径设计遵循 RESTful 风格：
+//   - /knowledge-bases/{id}/ppt-tasks      新建 / 列出某 KB 的任务
+//   - /ppt-tasks/{task_id}                 查询 / 取消
+//   - /ppt-tasks/{task_id}/download        下载结果
+//   - /ppt-tasks/health                    Bridge 健康检查
+func RegisterPPTGenRoutes(r *gin.RouterGroup, h *handler.PPTGenHandler) {
+	if h == nil {
+		return
+	}
+	kb := r.Group("/knowledge-bases/:id/ppt-tasks")
+	{
+		kb.POST("", h.CreatePPTGenTask)
+		kb.GET("", h.ListPPTGenTasks)
+	}
+	tasks := r.Group("/ppt-tasks")
+	{
+		tasks.GET("/health", h.PPTGenHealth)
+		tasks.POST("/test-model", h.TestPPTGenModels)
+		tasks.GET("/:task_id/preview", h.PreviewPPTGenResult)
+		tasks.GET("/:task_id/download", h.DownloadPPTGenResult)
+		tasks.DELETE("/:task_id/permanent", h.PurgePPTGenTask)
+		tasks.GET("/:task_id", h.GetPPTGenTask)
+		tasks.DELETE("/:task_id", h.CancelPPTGenTask)
+	}
 }
 
 // RegisterChunkRoutes 注册分块相关的路由

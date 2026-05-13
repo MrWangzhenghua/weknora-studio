@@ -302,6 +302,10 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(handler.NewDataSourceHandler))
 	// Wiki page handler
 	must(container.Provide(handler.NewWikiPageHandler))
+	// PPT 生成集成（PPTAgent Bridge）
+	must(container.Provide(service.NewPPTAgentBridgeClient))
+	must(container.Provide(service.NewPPTGenService))
+	must(container.Provide(handler.NewPPTGenHandler))
 	// IM integration
 	logger.Debugf(ctx, "[Container] Registering IM integration...")
 	must(container.Provide(imPkg.NewService))

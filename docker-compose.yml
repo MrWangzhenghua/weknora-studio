@@ -155,6 +155,16 @@ services:
       - WEKNORA_AGENT_LLM_TIMEOUT=${WEKNORA_AGENT_LLM_TIMEOUT:-}
       - WEKNORA_AGENT_TOOL_APPROVAL_TIMEOUT=${WEKNORA_AGENT_TOOL_APPROVAL_TIMEOUT:-}
       - APK_MIRROR_ARG=${APK_MIRROR_ARG:-}
+      # ========== PPTAgent Bridge 集成 ==========
+      # Bridge HTTP 服务地址（容器内通过服务名 pptagent 互访）
+      - PPTAGENT_BRIDGE_URL=${PPTAGENT_BRIDGE_URL:-http://pptagent:8090}
+      # Bridge Bearer Token：与 pptagent 服务的 BRIDGE_API_TOKEN 必须一致
+      - PPTAGENT_BRIDGE_TOKEN=${PPTAGENT_BRIDGE_TOKEN:-}
+      # WeKnora 调用 Bridge 普通请求的超时（秒）
+      - PPTAGENT_BRIDGE_TIMEOUT_SEC=${PPTAGENT_BRIDGE_TIMEOUT_SEC:-60}
+      - PPTAGENT_BRIDGE_MAX_FILE_MB=${PPTAGENT_BRIDGE_MAX_FILE_MB:-200}
+      # 单知识点导出 Markdown 最大码点数；超出则自动降级为摘要类 chunk 再喂给 Bridge
+      - PPTGEN_MARKDOWN_MAX_RUNES=${PPTGEN_MARKDOWN_MAX_RUNES:-28000}
     depends_on:
       redis:
         condition: service_started
@@ -162,6 +172,74 @@ services:
         condition: service_healthy
       docreader:
         condition: service_healthy
+    networks:
+      - WeKnora-network
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # ==========================================================================
+  # PPTAgent Bridge：将 icip-cas/PPTAgent 包装成 HTTP 服务，供 WeKnora 调用
+  # 默认通过 `--profile pptagent` 或 `--profile full` 启用
+  # ==========================================================================
+  pptagent:
+    image: wechatopenai/weknora-pptagent:${WEKNORA_VERSION:-latest}
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.pptagent
+      args:
+        APT_MIRROR: ${APT_MIRROR:-}
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
+    container_name: WeKnora-pptagent
+    profiles:
+      - pptagent
+      - full
+    ports:
+      - "${PPTAGENT_BRIDGE_PORT:-8090}:8090"
+    environment:
+      # ===== Bridge 自身 =====
+      - BRIDGE_HOST=0.0.0.0
+      - BRIDGE_PORT=8090
+      - BRIDGE_WORKSPACE=/data/pptagent
+      - BRIDGE_LOG_LEVEL=${PPTAGENT_LOG_LEVEL:-INFO}
+      - BRIDGE_API_TOKEN=${PPTAGENT_BRIDGE_TOKEN:-}
+      - BRIDGE_TASK_TIMEOUT=${PPTAGENT_TASK_TIMEOUT:-1800}
+      - BRIDGE_TASK_TTL_HOURS=${PPTAGENT_TASK_TTL_HOURS:-24}
+      - BRIDGE_MAX_CONCURRENCY=${PPTAGENT_MAX_CONCURRENCY:-1}
+      - BRIDGE_MAX_FILE_MB=${PPTAGENT_BRIDGE_MAX_FILE_MB:-200}
+      # ===== PPTAgent 主语言模型（必填）=====
+      - PPTAGENT_LLM_BASE_URL=${PPTAGENT_LLM_BASE_URL:-}
+      - PPTAGENT_LLM_MODEL=${PPTAGENT_LLM_MODEL:-}
+      - PPTAGENT_LLM_API_KEY=${PPTAGENT_LLM_API_KEY:-}
+      - PPTAGENT_LLM_TIMEOUT=${PPTAGENT_LLM_TIMEOUT:-600}
+      # 控制单次补全输出上限与合并 Markdown 长度，减轻 JSON 被截断、上下文过长问题
+      - PPTAGENT_LLM_MAX_OUTPUT_TOKENS=${PPTAGENT_LLM_MAX_OUTPUT_TOKENS:-32768}
+      - PPTAGENT_VLM_MAX_OUTPUT_TOKENS=${PPTAGENT_VLM_MAX_OUTPUT_TOKENS:-0}
+      - PPTAGENT_MARKDOWN_MAX_CHARS=${PPTAGENT_MARKDOWN_MAX_CHARS:-28000}
+      # ===== PPTAgent 视觉模型（可选）=====
+      - PPTAGENT_VLM_BASE_URL=${PPTAGENT_VLM_BASE_URL:-}
+      - PPTAGENT_VLM_MODEL=${PPTAGENT_VLM_MODEL:-}
+      - PPTAGENT_VLM_API_KEY=${PPTAGENT_VLM_API_KEY:-}
+      - PPTAGENT_VLM_TIMEOUT=${PPTAGENT_VLM_TIMEOUT:-600}
+      - PPTAGENT_DEFAULT_TEMPLATE=${PPTAGENT_DEFAULT_TEMPLATE:-default}
+      - TZ=${TZ:-Asia/Shanghai}
+      # Hugging Face Hub：模型/语言识别等资源缓存（见 docs/PPTAgent-HF缓存与加速.md）
+      - HF_HOME=/data/huggingface
+      - HF_TOKEN=${HF_TOKEN:-}
+    volumes:
+      # Bridge workspace：保存任务工作目录与最终生成的 .pptx 文件
+      - pptagent-data:/data/pptagent
+      # HF 缓存持久化：避免每次重建容器都重新下载 fasttext-language-id 等文件
+      - pptagent-hf-cache:/data/huggingface
+      # 把源码挂进容器，便于改动 bridge 代码不重新构建镜像
+      - ./integrations/pptagent_bridge:/opt/pptagent_bridge
+      - ./integrations/PPTAgent:/opt/PPTAgent
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8090/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
     networks:
       - WeKnora-network
     restart: unless-stopped
@@ -736,3 +814,7 @@ volumes:
   langfuse_clickhouse_logs:
   langfuse_minio_data:
   searxng_config:
+  # PPTAgent Bridge 工作区：保存任务工作目录与最终 PPT 文件
+  pptagent-data:
+  # PPTAgent 依赖的 Hugging Face Hub 本地缓存（如语言识别 lid.176.bin）
+  pptagent-hf-cache:

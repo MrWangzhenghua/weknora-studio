@@ -33,6 +33,7 @@ import {
 import FAQEntryManager from './components/FAQEntryManager.vue';
 import DocumentListView from './components/DocumentListView.vue';
 import DocumentBatchBar from './components/DocumentBatchBar.vue';
+import PPTGenerateDialog from './components/PPTGenerateDialog.vue';
 import WikiBrowser from './wiki/WikiBrowser.vue';
 import { getWikiStats } from '@/api/wiki';
 import { listMoveTargets, moveKnowledge, getKnowledgeMoveProgress } from '@/api/knowledge-base';
@@ -48,6 +49,12 @@ const uploadInputRef = ref<HTMLInputElement | null>(null);
 const folderUploadInputRef = ref<HTMLInputElement | null>(null);
 const uploading = ref(false);
 const kbLoading = ref(false);
+// PPT 生成对话框可见性（控件位于卡片操作区，弹窗组件在模板末尾）
+const pptGenDialogVisible = ref(false);
+function openPPTGenDialog() {
+  if (!kbId.value) return;
+  pptGenDialogVisible.value = true;
+}
 const docListLoading = ref(true);
 const isFAQ = computed(() => (kbInfo.value?.type || '') === 'faq');
 const isWiki = computed(() => !!kbInfo.value?.indexing_strategy?.wiki_enabled);
@@ -2155,6 +2162,19 @@ async function createNewSession(value: string): Promise<void> {
                 </t-tooltip>
               </div>
               <div v-if="canEdit" class="doc-filter-actions">
+                <t-tooltip :content="$t('pptGen.entryTooltip')" placement="top">
+                  <t-button
+                    theme="primary"
+                    variant="outline"
+                    size="small"
+                    :disabled="!kbId"
+                    class="ppt-gen-entry-btn"
+                    @click="openPPTGenDialog"
+                  >
+                    <template #icon><t-icon name="slideshow" size="16px" /></template>
+                    {{ $t('pptGen.entry') }}
+                  </t-button>
+                </t-tooltip>
                 <t-tooltip :content="$t('knowledgeBase.addDocument')" placement="top">
                   <t-dropdown
                     :options="documentActionOptions"
@@ -2584,6 +2604,13 @@ async function createNewSession(value: string): Promise<void> {
     :initial-type="uiStore.kbEditorType"
     @update:visible="(val) => val ? null : uiStore.closeKBEditor()"
     @success="handleKBEditorSuccess"
+  />
+
+  <!-- PPT 生成对话框：基于知识库内容调用 PPTAgent 生成 PPT -->
+  <PPTGenerateDialog
+    v-model:visible="pptGenDialogVisible"
+    :kb-id="kbId"
+    :kb-name="kbInfo?.name || ''"
   />
 </template>
 <style>
@@ -3108,6 +3135,13 @@ async function createNewSession(value: string): Promise<void> {
 
   .doc-filter-actions {
     flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    .ppt-gen-entry-btn {
+      // 主操作高亮：从其他工具按钮中突出"生成 PPT"
+      font-weight: 500;
+    }
     :deep(.content-bar-icon-btn) {
       color: var(--td-text-color-secondary);
       background: transparent;
