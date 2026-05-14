@@ -8,6 +8,7 @@ from typing import Optional
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+import httpx
 
 from . import __version__
 from .config import settings
@@ -90,6 +91,20 @@ async def generate_flashcards(
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+    except httpx.HTTPStatusError as e:
+        code = e.response.status_code
+        if code == 429:
+            raise HTTPException(
+                status_code=429,
+                detail="上游 LLM 限流(429)：已自动退避重试仍失败，请稍后再试或提升智谱配额。",
+            ) from e
+        if code in (502, 503):
+            raise HTTPException(
+                status_code=502,
+                detail=f"上游 LLM 暂不可用({code})，请稍后重试。",
+            ) from e
+        logger.exception("flashcard generate failed")
+        raise HTTPException(status_code=500, detail=str(e)) from e
     except Exception as e:
         logger.exception("flashcard generate failed")
         raise HTTPException(status_code=500, detail=str(e)) from e

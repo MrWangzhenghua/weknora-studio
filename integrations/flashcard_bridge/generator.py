@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
+import time
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 import httpx
@@ -13,6 +16,58 @@ from .config import FlashcardBridgeSettings
 from .models import FlashcardItem
 
 logger = logging.getLogger(__name__)
+
+
+def _retry_after_seconds(response: httpx.Response) -> float | None:
+    """解析 Retry-After：秒数或 HTTP-date。"""
+    raw = (response.headers.get("retry-after") or "").strip()
+    if not raw:
+        return None
+    try:
+        return max(0.5, float(raw))
+    except ValueError:
+        pass
+    try:
+        dt = parsedate_to_datetime(raw)
+        if dt is None:
+            return None
+        return max(0.5, dt.timestamp() - time.time())
+    except Exception:
+        return None
+
+
+async def _post_chat_with_retries(
+    *,
+    client: httpx.AsyncClient,
+    url: str,
+    headers: dict[str, str],
+    payload: dict[str, Any],
+    max_retries: int,
+    base_delay: float,
+    max_sleep: float,
+) -> httpx.Response:
+    """对 429 / 503 / 502 做指数退避重试，遵守 Retry-After。"""
+    attempt = 0
+    while True:
+        r = await client.post(url, headers=headers, json=payload)
+        if r.status_code not in (429, 502, 503):
+            return r
+        if attempt >= max_retries:
+            return r
+        ra = _retry_after_seconds(r)
+        if ra is not None:
+            wait = min(max_sleep, ra)
+        else:
+            wait = min(max_sleep, base_delay * (2**attempt))
+        logger.warning(
+            "flashcard LLM %s, sleeping %.1fs then retry (%d/%d)",
+            r.status_code,
+            wait,
+            attempt + 1,
+            max_retries,
+        )
+        await asyncio.sleep(wait)
+        attempt += 1
 
 
 def _normalize_base_url(url: str) -> str:
@@ -24,6 +79,11 @@ def _chat_completions_url(base_url: str) -> str:
     b = _normalize_base_url(base_url)
     if not b:
         return ""
+    low = b.lower()
+    # 智谱 BigModel：base 已是 .../api/paas/v4，应接 /chat/completions；
+    # 若误接 /v1/chat/completions 会得到 404（日志里即此情况）。
+    if "open.bigmodel.cn" in low or "/api/paas/" in low:
+        return f"{b}/chat/completions"
     if "/v1" in b:
         return f"{b}/chat/completions"
     return f"{b}/v1/chat/completions"
@@ -130,7 +190,15 @@ async def generate_flashcards_from_context(
     }
 
     async with httpx.AsyncClient(timeout=timeout) as client:
-        r = await client.post(url, headers=headers, json=payload)
+        r = await _post_chat_with_retries(
+            client=client,
+            url=url,
+            headers=headers,
+            payload=payload,
+            max_retries=max(0, settings.llm_max_retries),
+            base_delay=max(0.5, settings.llm_retry_base_delay_sec),
+            max_sleep=max(1.0, settings.llm_retry_max_sleep_sec),
+        )
         r.raise_for_status()
         body = r.json()
 
