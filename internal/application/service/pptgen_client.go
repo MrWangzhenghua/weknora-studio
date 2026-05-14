@@ -276,6 +276,7 @@ func (c *PPTAgentBridgeClient) PreviewResult(ctx context.Context, bridgeTaskID s
 }
 
 // GetTask 查询单个任务状态。
+func (c *PPTAgentBridgeClient) GetTask(ctx context.Context, taskID string) (*BridgeTaskInfo, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/v1/tasks/"+url.PathEscape(taskID), nil)
 	if err != nil {
 		return nil, err

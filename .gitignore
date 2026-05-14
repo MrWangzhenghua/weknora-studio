@@ -5,6 +5,9 @@
 !.gitignore
 !.github/
 
+# 本地环境变量（含 API Key 等，切勿提交）
+.env
+
 # 敏感文件
 *.pem
 *_key
