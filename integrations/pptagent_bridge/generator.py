@@ -240,7 +240,8 @@ class PPTGenerator:
                 "未配置 PPTAGENT_LLM_BASE_URL / PPTAGENT_LLM_MODEL / PPTAGENT_LLM_API_KEY"
             )
 
-        # 为 AsyncLLM 注入 max_completion_tokens，缓解推理模型「推理占用过多 completion 额度」导致正文 JSON 不完整
+        # 为 AsyncLLM 注入 max_completion_tokens /（MaaS 时）max_tokens，并可选关闭深度思考，
+        # 缓解「reasoning 占满 completion 额度 → 正文 JSON 被截断 → parse 失败」。
         llm_max_out = max(0, settings.llm_max_output_tokens)
         vlm_max_out = max(0, settings.vlm_max_output_tokens)
         if vlm_max_out <= 0:
@@ -249,10 +250,17 @@ class PPTGenerator:
         language_model = _make_llm(
             _resolve_llm_endpoint(settings, record.request, role="llm"),
             llm_max_out,
+            maas_compat=settings.llm_maas_compat,
+            disable_thinking=settings.llm_disable_thinking,
         )
         vlm_ep = _resolve_llm_endpoint(settings, record.request, role="vlm")
         if vlm_ep.is_configured:
-            vision_model = _make_llm(vlm_ep, vlm_max_out)
+            vision_model = _make_llm(
+                vlm_ep,
+                vlm_max_out,
+                maas_compat=settings.vlm_maas_compat,
+                disable_thinking=settings.vlm_disable_thinking,
+            )
         else:
             vision_model = language_model
 
@@ -808,11 +816,24 @@ def _extract_balanced_json(text: str) -> Optional[str]:
     return None
 
 
-def _make_llm(endpoint: LLMEndpoint, max_output_tokens: int = 0):
+# 华为 MaaS 等网关文档：深度思考时 reasoning 与 content 共享输出 token 预算；结构化 parse 需要足够上限。
+_MAAS_MIN_COMPLETION_TOKENS = 65536
+
+
+def _make_llm(
+    endpoint: LLMEndpoint,
+    max_output_tokens: int = 0,
+    *,
+    maas_compat: bool = False,
+    disable_thinking: bool = False,
+):
     """构造 PPTAgent 期望的 ``AsyncLLM``。
 
-    max_output_tokens > 0 时，为每次 ``chat.completions`` 调用默认附带 ``max_completion_tokens``，
-    降低「输出被网关截断 → pydantic 无法解析」的概率；设为 0 则不修改 PPTAgent 默认行为。
+    - 默认：``max_output_tokens > 0`` 时注入 ``max_completion_tokens``（OpenAI 系）。
+    - **MaaS 兼容**（``maas_compat=True``）：同时注入 ``max_tokens``（部分网关文档以此限制
+      content+reasoning 总长），并将有效上限抬到至少 ``_MAAS_MIN_COMPLETION_TOKENS``；
+      可选通过 ``extra_body.chat_template_kwargs`` 关闭深度思考，把额度留给 JSON 正文。
+    - 若不需要任何注入且非 MaaS，返回未包装的 ``AsyncLLM``。
     """
 
     from pptagent import AsyncLLM
@@ -823,14 +844,37 @@ def _make_llm(endpoint: LLMEndpoint, max_output_tokens: int = 0):
         api_key=endpoint.api_key,
         timeout=endpoint.timeout,
     )
-    if max_output_tokens <= 0:
+
+    cap = max(0, int(max_output_tokens))
+    if maas_compat:
+        cap = max(cap, _MAAS_MIN_COMPLETION_TOKENS)
+
+    need_wrap = cap > 0 or maas_compat
+    if not need_wrap:
         return llm
 
     _orig_call = AsyncLLM.__call__
 
     async def _wrapped(self, *args, **kwargs):  # type: ignore[no-untyped-def]
-        if "max_tokens" not in kwargs and "max_completion_tokens" not in kwargs:
-            kwargs["max_completion_tokens"] = max_output_tokens
+        if cap > 0:
+            if maas_compat:
+                if "max_tokens" not in kwargs:
+                    kwargs["max_tokens"] = cap
+                if "max_completion_tokens" not in kwargs:
+                    kwargs["max_completion_tokens"] = cap
+            else:
+                if "max_tokens" not in kwargs and "max_completion_tokens" not in kwargs:
+                    kwargs["max_completion_tokens"] = cap
+
+        if maas_compat and disable_thinking:
+            extra = dict(kwargs.get("extra_body") or {})
+            ctk = dict(extra.get("chat_template_kwargs") or {})
+            if "enable_thinking" not in ctk and "thinking" not in ctk:
+                # Qwen3 等文档使用 enable_thinking；未显式配置时再关闭，避免覆盖用户自定义。
+                ctk["enable_thinking"] = False
+            extra["chat_template_kwargs"] = ctk
+            kwargs["extra_body"] = extra
+
         return await _orig_call(self, *args, **kwargs)
 
     llm.__call__ = _wrapped.__get__(llm, AsyncLLM)  # type: ignore[method-assign]

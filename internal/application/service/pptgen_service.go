@@ -13,7 +13,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -82,13 +81,13 @@ func (s *PPTGenService) CreateTask(
 	if err != nil {
 		return nil, errors.NewInternalServerError("list knowledge failed").WithDetails(err.Error())
 	}
-	included, skipped := selectKnowledgeForPPT(list, req.IncludeFileIDs)
+	included, skipped := SelectKnowledgeForBridge(list, req.IncludeFileIDs)
 	if len(included) == 0 {
 		return nil, errors.NewBadRequestError("knowledge base has no eligible documents for PPT generation")
 	}
 
 	// 2) 组装 bridge 文件流。
-	files, totalBytes, err := s.collectFiles(ctx, included)
+	files, totalBytes, err := CollectKnowledgeBridgeFiles(ctx, s.knowSvc, s.chunkSvc, included)
 	if err != nil {
 		// 已打开的流由 collectFiles 自己负责关闭出错的部分；剩余流随 client 关闭处理。
 		closeBridgeFiles(files)
@@ -258,106 +257,6 @@ func (s *PPTGenService) HealthCheck(ctx context.Context) error {
 
 // ================ 内部 helpers ================
 
-// selectKnowledgeForPPT 过滤出可用于生成 PPT 的知识条目。
-// 跳过未解析完成 / 已禁用 / FAQ 类型 / 仅包含图片的条目。
-func selectKnowledgeForPPT(list []*types.Knowledge, includeIDs []string) (included, skipped []*types.Knowledge) {
-	whitelist := make(map[string]struct{}, len(includeIDs))
-	for _, id := range includeIDs {
-		whitelist[id] = struct{}{}
-	}
-	for _, k := range list {
-		if k == nil {
-			continue
-		}
-		if len(whitelist) > 0 {
-			if _, ok := whitelist[k.ID]; !ok {
-				continue
-			}
-		}
-		if !isKnowledgeUsableForPPT(k) {
-			skipped = append(skipped, k)
-			continue
-		}
-		included = append(included, k)
-	}
-	return
-}
-
-func isKnowledgeUsableForPPT(k *types.Knowledge) bool {
-	if k == nil {
-		return false
-	}
-	if k.Type == types.KnowledgeTypeFAQ {
-		// FAQ 知识结构化更适合走专用流程；此处先跳过避免拉低 PPT 质量。
-		return false
-	}
-	// manual 类型即便 ParseStatus 为空也允许使用（其 Content 存在 metadata 中）。
-	if k.IsManual() {
-		return true
-	}
-	if k.ParseStatus != "" && k.ParseStatus != types.ParseStatusCompleted {
-		return false
-	}
-	// 与 chat/QA 流水线保持一致：只接受显式 enabled 的条目；为空时允许，
-	// 兼容历史数据。
-	if k.EnableStatus != "" && k.EnableStatus != "enabled" {
-		return false
-	}
-	return true
-}
-
-// collectFiles 将每个知识转换为 Bridge 所需的输入。
-//
-// 关键设计变更：
-//   - 不再把原始 PDF/DOCX 二进制直接丢给 Bridge，因为 Bridge 内部的 any2markdown
-//     在某些环境下解析失败时会回退到 "文件未自动解析" 的 placeholder，
-//     导致 LLM 看到的不是真实知识内容，从而生成"在通报文件未解析"的废 PPT。
-//   - 这里复用 WeKnora 已经跑过的 docreader 解析结果：直接读取该知识下所有 chunk，
-//     按 chunk_index 排好序后拼成一份 Markdown，作为输入。
-//   - 仅当确实没有 chunk 时，才退回原始文件流（极端兜底）。
-//
-// 返回的 BridgeFile.Reader 由调用方负责关闭（成功路径下 client 写入时会关闭）。
-func (s *PPTGenService) collectFiles(ctx context.Context, list []*types.Knowledge) ([]BridgeFile, int64, error) {
-	files := make([]BridgeFile, 0, len(list))
-	var total int64
-	for _, k := range list {
-		md, ok := s.buildKnowledgeMarkdown(ctx, k)
-		if ok {
-			data := []byte(md)
-			name := mdFileNameForKnowledge(k)
-			files = append(files, BridgeFile{
-				Name:        name,
-				ContentType: "text/markdown; charset=utf-8",
-				Reader:      io.NopCloser(bytes.NewReader(data)),
-			})
-			total += int64(len(data))
-			logger.Infof(ctx, "[pptgen] knowledge %s -> markdown %d bytes (chunk-based)", k.ID, len(data))
-			continue
-		}
-
-		// 兜底：没有 chunk（或解析尚未完成），把原始文件喂给 Bridge 试一次。
-		reader, filename, err := s.knowSvc.GetKnowledgeFile(ctx, k.ID)
-		if err != nil {
-			logger.Warnf(ctx, "[pptgen] skip knowledge %s: no chunk and file unavailable: %v", k.ID, err)
-			continue
-		}
-		if filename == "" {
-			filename = k.FileName
-			if filename == "" {
-				filename = k.ID + ".bin"
-			}
-		}
-		files = append(files, BridgeFile{
-			Name:        filename,
-			ContentType: guessContentType(filename),
-			Reader:      reader,
-		})
-		total += k.FileSize
-		logger.Warnf(ctx, "[pptgen] knowledge %s has no chunk, fall back to raw file %s", k.ID, filename)
-	}
-	return files, total, nil
-}
-
 // pptgenMarkdownMaxRunes 单份知识导出 Markdown 的码点上限（与 PPTAgent 内部对超长输入的预警尺度同量级）。
 // 超出后优先改为仅摘要类 chunk；仍超长则硬截断。可通过环境变量 PPTGEN_MARKDOWN_MAX_RUNES 调整。
 func pptgenMarkdownMaxRunes() int {
@@ -373,184 +272,6 @@ func pptgenMarkdownMaxRunes() int {
 		return 500000
 	}
 	return n
-}
-
-// pickChunksForPPT 筛选参与 PPT 素材的 chunk。summaryOnly 为 true 时只保留摘要类，避免撑爆模型上下文。
-func pickChunksForPPT(chunks []*types.Chunk, summaryOnly bool) []*types.Chunk {
-	picked := make([]*types.Chunk, 0, len(chunks))
-	for _, c := range chunks {
-		if c == nil {
-			continue
-		}
-		if strings.TrimSpace(c.Content) == "" {
-			continue
-		}
-		if summaryOnly {
-			switch c.ChunkType {
-			case types.ChunkTypeSummary, types.ChunkTypeTableSummary:
-				picked = append(picked, c)
-			}
-			continue
-		}
-		switch c.ChunkType {
-		case types.ChunkTypeText,
-			types.ChunkTypeParentText,
-			types.ChunkTypeSummary,
-			types.ChunkTypeWikiPage,
-			types.ChunkTypeImageCaption,
-			types.ChunkTypeImageOCR,
-			types.ChunkTypeTableSummary,
-			types.ChunkTypeTableColumn:
-			picked = append(picked, c)
-		}
-	}
-	sort.SliceStable(picked, func(i, j int) bool {
-		if picked[i].ChunkIndex != picked[j].ChunkIndex {
-			return picked[i].ChunkIndex < picked[j].ChunkIndex
-		}
-		return picked[i].CreatedAt.Before(picked[j].CreatedAt)
-	})
-	return picked
-}
-
-// composeMarkdownFromPicked 将已排序的 chunk 写成 Markdown（含标题与可选提示横幅）。
-func (s *PPTGenService) composeMarkdownFromPicked(k *types.Knowledge, picked []*types.Chunk, banner string) string {
-	if len(picked) == 0 {
-		return ""
-	}
-	title := firstNonEmpty(k.Title, k.FileName, k.ID)
-	var buf strings.Builder
-	buf.Grow(2048)
-	buf.WriteString("# ")
-	buf.WriteString(title)
-	buf.WriteString("\n\n")
-	if banner != "" {
-		buf.WriteString("> ")
-		buf.WriteString(strings.ReplaceAll(strings.TrimSpace(banner), "\n", " "))
-		buf.WriteString("\n\n")
-	}
-	if k.Description != "" {
-		buf.WriteString("> ")
-		buf.WriteString(strings.ReplaceAll(strings.TrimSpace(k.Description), "\n", " "))
-		buf.WriteString("\n\n")
-	}
-
-	seen := make(map[string]struct{}, len(picked))
-	for _, c := range picked {
-		body := strings.TrimSpace(c.Content)
-		if body == "" {
-			continue
-		}
-		if _, ok := seen[body]; ok {
-			continue
-		}
-		seen[body] = struct{}{}
-
-		switch c.ChunkType {
-		case types.ChunkTypeImageCaption:
-			buf.WriteString("**[图片说明]** ")
-			buf.WriteString(body)
-			buf.WriteString("\n\n")
-		case types.ChunkTypeImageOCR:
-			buf.WriteString("**[图片文字]** ")
-			buf.WriteString(body)
-			buf.WriteString("\n\n")
-		case types.ChunkTypeTableSummary:
-			buf.WriteString("**[表格摘要]** ")
-			buf.WriteString(body)
-			buf.WriteString("\n\n")
-		case types.ChunkTypeTableColumn:
-			buf.WriteString("**[表格列]** ")
-			buf.WriteString(body)
-			buf.WriteString("\n\n")
-		case types.ChunkTypeSummary:
-			buf.WriteString("**[摘要]** ")
-			buf.WriteString(body)
-			buf.WriteString("\n\n")
-		default:
-			buf.WriteString(body)
-			buf.WriteString("\n\n")
-		}
-	}
-	return strings.TrimSpace(buf.String())
-}
-
-// truncateMarkdownRunes 按 Unicode 码点截断，避免半截 UTF-8；用于最后兜底。
-func truncateMarkdownRunes(s string, maxRunes int) string {
-	if maxRunes < 64 {
-		maxRunes = 64
-	}
-	if utf8.RuneCountInString(s) <= maxRunes {
-		return s
-	}
-	r := []rune(s)
-	if len(r) > maxRunes {
-		r = r[:maxRunes]
-	}
-	return strings.TrimSpace(string(r)) + "\n\n> **[WeKnora]** 内容仍超出长度上限，已截断尾部。可调大环境变量 `PPTGEN_MARKDOWN_MAX_RUNES` 或精简知识库。\n"
-}
-
-// buildKnowledgeMarkdown 把一个知识对应的 chunks 拼成一份 Markdown。
-// 仅保留正文类 chunk（text/parent_text/summary/wiki_page/...）；若总长仍超过 pptgenMarkdownMaxRunes，
-// 则自动降级为仅「摘要 / 表格摘要」类 chunk（WeKnora 解析产物）；若无摘要则对全文硬截断。
-func (s *PPTGenService) buildKnowledgeMarkdown(ctx context.Context, k *types.Knowledge) (string, bool) {
-	if s.chunkSvc == nil || k == nil {
-		return "", false
-	}
-	chunks, err := s.chunkSvc.ListChunksByKnowledgeID(ctx, k.ID)
-	if err != nil {
-		logger.Warnf(ctx, "[pptgen] list chunks failed for %s: %v", k.ID, err)
-		return "", false
-	}
-	if len(chunks) == 0 {
-		return "", false
-	}
-
-	limit := pptgenMarkdownMaxRunes()
-	picked := pickChunksForPPT(chunks, false)
-	if len(picked) == 0 {
-		return "", false
-	}
-
-	md := s.composeMarkdownFromPicked(k, picked, "")
-	if md == "" {
-		return "", false
-	}
-
-	if utf8.RuneCountInString(md) <= limit {
-		return md, true
-	}
-
-	logger.Warnf(ctx, "[pptgen] knowledge %s markdown runes=%d > limit=%d, fallback to summary-only chunks",
-		k.ID, utf8.RuneCountInString(md), limit)
-
-	summaryPicked := pickChunksForPPT(chunks, true)
-	banner := "【全文过长，已自动改为仅使用系统生成的摘要与表格摘要作为 PPT 素材】"
-	if len(summaryPicked) > 0 {
-		md = s.composeMarkdownFromPicked(k, summaryPicked, banner)
-	} else {
-		logger.Warnf(ctx, "[pptgen] knowledge %s has no summary chunks, hard-truncate full markdown", k.ID)
-		md = s.composeMarkdownFromPicked(k, picked, "【全文过长且无摘要类 chunk，将截断正文】")
-		md = truncateMarkdownRunes(md, limit)
-	}
-
-	if utf8.RuneCountInString(md) > limit {
-		md = truncateMarkdownRunes(md, limit)
-	}
-	if strings.TrimSpace(md) == "" {
-		return "", false
-	}
-	return md, true
-}
-
-// mdFileNameForKnowledge 给生成的 markdown 文件起个稳定且 Bridge 端友好的文件名。
-func mdFileNameForKnowledge(k *types.Knowledge) string {
-	base := firstNonEmpty(strings.TrimSuffix(k.FileName, filepath.Ext(k.FileName)), k.Title, k.ID)
-	base = sanitizePPTFilename(base)
-	if base == "" {
-		base = "knowledge"
-	}
-	return base + ".md"
 }
 
 func closeBridgeFiles(files []BridgeFile) {

@@ -2,12 +2,18 @@
 # =====================================================================
 # PPTAgent Bridge 镜像
 # 提供 WeKnora 调用的 HTTP 网关 + 内置 PPTAgent 生成能力
+#
+# 说明：上游 PPTAgent 体积较大，很多 fork 未包含子模块；构建阶段从 GitHub
+# 浅克隆指定分支/标签，避免 COPY 空目录导致 pip install -e 失败。
 # =====================================================================
 
 FROM python:3.11-slim AS base
 
 ARG APT_MIRROR=""
 ARG PIP_INDEX_URL="https://pypi.org/simple"
+# 可覆盖为国内镜像或固定 commit 对应的 tag，保证可复现构建
+ARG PPTAGENT_GIT_REPO="https://github.com/icip-cas/PPTAgent.git"
+ARG PPTAGENT_GIT_REF="main"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -17,7 +23,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /opt/pptagent
 
-# 系统依赖（PPTAgent 解析 PDF/Office 等需要）
+# 系统依赖（PPTAgent 解析 PDF/Office 等需要）；git 用于克隆上游仓库
 RUN if [ -n "${APT_MIRROR}" ]; then \
         sed -i "s@deb.debian.org@${APT_MIRROR}@g" /etc/apt/sources.list.d/debian.sources || true; \
     fi && \
@@ -26,6 +32,7 @@ RUN if [ -n "${APT_MIRROR}" ]; then \
         build-essential \
         curl \
         ca-certificates \
+        git \
         libxml2 \
         libxslt1.1 \
         libjpeg62-turbo \
@@ -41,11 +48,13 @@ RUN if [ -n "${APT_MIRROR}" ]; then \
         poppler-utils && \
     rm -rf /var/lib/apt/lists/*
 
-# 先把 PPTAgent 源码与 bridge 源码拷入镜像
-COPY integrations/PPTAgent /opt/PPTAgent
+# 从官方仓库获取 PPTAgent（构建机需能访问 Git；内网可改用 PPTAGENT_GIT_REPO 指向镜像站）
+RUN rm -rf /opt/PPTAgent && \
+    git clone --depth 1 --branch "${PPTAGENT_GIT_REF}" "${PPTAGENT_GIT_REPO}" /opt/PPTAgent
+
 COPY integrations/pptagent_bridge /opt/pptagent_bridge
 
-# 安装 PPTAgent（editable 安装，便于以后挂载源码热重载）
+# 安装 PPTAgent（editable 安装，便于开发时在 compose 里挂载覆盖 bridge）
 RUN pip install --upgrade pip && \
     pip install --no-cache-dir -e /opt/PPTAgent && \
     pip install --no-cache-dir -r /opt/pptagent_bridge/requirements.txt

@@ -70,6 +70,7 @@ type RouterParams struct {
 	WeKnoraCloudHandler      *handler.WeKnoraCloudHandler
 	WikiPageHandler          *handler.WikiPageHandler
 	PPTGenHandler            *handler.PPTGenHandler
+	FlashcardGenHandler      *handler.FlashcardGenHandler
 }
 
 // NewRouter 创建新的路由
@@ -164,6 +165,7 @@ func NewRouter(params RouterParams) *gin.Engine {
 		RegisterWikiPageRoutes(v1, params.WikiPageHandler)
 		RegisterChunkerDebugRoutes(v1)
 		RegisterPPTGenRoutes(v1, params.PPTGenHandler)
+		RegisterFlashcardGenRoutes(v1, params.FlashcardGenHandler)
 	}
 
 	return r
@@ -200,6 +202,18 @@ func RegisterPPTGenRoutes(r *gin.RouterGroup, h *handler.PPTGenHandler) {
 		tasks.GET("/:task_id", h.GetPPTGenTask)
 		tasks.DELETE("/:task_id", h.CancelPPTGenTask)
 	}
+}
+
+// RegisterFlashcardGenRoutes 注册「从知识库生成闪卡」路由（参考 genai-rag 的闪卡能力，经 Bridge 调用 LLM）。
+func RegisterFlashcardGenRoutes(r *gin.RouterGroup, h *handler.FlashcardGenHandler) {
+	if h == nil {
+		return
+	}
+	kb := r.Group("/knowledge-bases/:id/flashcards")
+	{
+		kb.POST("/generate", h.GenerateFlashcards)
+	}
+	r.GET("/flashcards/health", h.FlashcardHealth)
 }
 
 // RegisterChunkRoutes 注册分块相关的路由

@@ -34,6 +34,7 @@ import FAQEntryManager from './components/FAQEntryManager.vue';
 import DocumentListView from './components/DocumentListView.vue';
 import DocumentBatchBar from './components/DocumentBatchBar.vue';
 import PPTGenerateDialog from './components/PPTGenerateDialog.vue';
+import FlashcardGenerateDialog from './components/FlashcardGenerateDialog.vue';
 import WikiBrowser from './wiki/WikiBrowser.vue';
 import { getWikiStats } from '@/api/wiki';
 import { listMoveTargets, moveKnowledge, getKnowledgeMoveProgress } from '@/api/knowledge-base';
@@ -51,9 +52,14 @@ const uploading = ref(false);
 const kbLoading = ref(false);
 // PPT 生成对话框可见性（控件位于卡片操作区，弹窗组件在模板末尾）
 const pptGenDialogVisible = ref(false);
+const flashcardGenDialogVisible = ref(false);
 function openPPTGenDialog() {
   if (!kbId.value) return;
   pptGenDialogVisible.value = true;
+}
+function openFlashcardGenDialog() {
+  if (!kbId.value) return;
+  flashcardGenDialogVisible.value = true;
 }
 const docListLoading = ref(true);
 const isFAQ = computed(() => (kbInfo.value?.type || '') === 'faq');
@@ -2162,6 +2168,19 @@ async function createNewSession(value: string): Promise<void> {
                 </t-tooltip>
               </div>
               <div v-if="canEdit" class="doc-filter-actions">
+                <t-tooltip :content="$t('flashcardGen.entryTooltip')" placement="top">
+                  <t-button
+                    theme="success"
+                    variant="outline"
+                    size="small"
+                    :disabled="!kbId"
+                    class="ppt-gen-entry-btn"
+                    @click="openFlashcardGenDialog"
+                  >
+                    <template #icon><t-icon name="layers" size="16px" /></template>
+                    {{ $t('flashcardGen.entry') }}
+                  </t-button>
+                </t-tooltip>
                 <t-tooltip :content="$t('pptGen.entryTooltip')" placement="top">
                   <t-button
                     theme="primary"
@@ -2609,6 +2628,11 @@ async function createNewSession(value: string): Promise<void> {
   <!-- PPT 生成对话框：基于知识库内容调用 PPTAgent 生成 PPT -->
   <PPTGenerateDialog
     v-model:visible="pptGenDialogVisible"
+    :kb-id="kbId"
+    :kb-name="kbInfo?.name || ''"
+  />
+  <FlashcardGenerateDialog
+    v-model:visible="flashcardGenDialogVisible"
     :kb-id="kbId"
     :kb-name="kbInfo?.name || ''"
   />

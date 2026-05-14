@@ -306,6 +306,10 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(service.NewPPTAgentBridgeClient))
 	must(container.Provide(service.NewPPTGenService))
 	must(container.Provide(handler.NewPPTGenHandler))
+	// 闪卡生成（Flashcard Bridge，参考 genai-rag 流程）
+	must(container.Provide(service.NewFlashcardBridgeClient))
+	must(container.Provide(service.NewFlashcardGenService))
+	must(container.Provide(handler.NewFlashcardGenHandler))
 	// IM integration
 	logger.Debugf(ctx, "[Container] Registering IM integration...")
 	must(container.Provide(imPkg.NewService))

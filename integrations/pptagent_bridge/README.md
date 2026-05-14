@@ -2,6 +2,8 @@
 
 把 [icip-cas/PPTAgent](https://github.com/icip-cas/PPTAgent) 包装成 HTTP 服务，供 WeKnora 后端通过 REST 调用。
 
+Docker 镜像构建时会在 Dockerfile 内 **浅克隆** 上述仓库（无需在宿主仓库里再放一份 `integrations/PPTAgent`）；构建环境需能访问 Git。可通过环境变量 `PPTAGENT_GIT_REPO` / `PPTAGENT_GIT_REF` 覆盖（见根目录 `.env.example`）。
+
 > 完整的集成方案、接口规范、部署指南请阅读：[`../../docs/PPTAgent集成方案.md`](../../docs/PPTAgent集成方案.md)。
 
 ## 一句话用法
@@ -61,6 +63,10 @@ pptagent_bridge/
 | `PPTAGENT_LLM_MODEL`              | 空（必填）            | 主语言模型名称                                        |
 | `PPTAGENT_LLM_API_KEY`            | 空（必填）            | 主语言模型 API Key                                    |
 | `PPTAGENT_LLM_TIMEOUT`            | `600`                 | LLM 请求超时                                          |
+| `PPTAGENT_LLM_MAX_OUTPUT_TOKENS`  | `65536`               | 单次补全输出上限；MaaS 下还会注入 `max_tokens` 并保底 |
+| `PPTAGENT_LLM_MAAS_COMPAT`        | URL 含 `modelarts-maas.com` 时为 `true` | 华为 MaaS OpenAI 兼容模式 |
+| `PPTAGENT_LLM_DISABLE_THINKING`   | MaaS 时默认 `true`    | `extra_body.chat_template_kwargs.enable_thinking=false`，减少 reasoning 占满额度导致 `parse` 失败 |
+| `PPTAGENT_VLM_*` / `PPTAGENT_VLM_MAAS_COMPAT` / `PPTAGENT_VLM_DISABLE_THINKING` | 同上逻辑 | 视觉模型（可选） |
 | `PPTAGENT_VLM_BASE_URL` / 等       | 空                    | 视觉模型（可选；未配置时回退到 LLM）                  |
 | `PPTAGENT_DEFAULT_TEMPLATE`       | `default`             | 默认 PPT 模板                                         |
 
@@ -86,4 +92,5 @@ python -m pptagent_bridge
 
 - `language_model_configured=false`：检查 `PPTAGENT_LLM_*` 环境变量是否注入容器。
 - 任务卡在 `drafting`：通常是 LLM 限流或网络抖动，先看 LLM 提供方控制台。
+- **`Could not parse response content as the length limit was reached`**（华为 MaaS / 深度思考模型常见）：思维链 `reasoning_tokens` 与可见 `content` 共享输出上限，PPTAgent 使用 `chat.completions.parse` 时 JSON 被截断会触发该错误。处理：保持 **`PPTAGENT_LLM_MAAS_COMPAT=true`**（对 `modelarts-maas.com` 自动开启），并默认 **`PPTAGENT_LLM_DISABLE_THINKING=true`**；仍失败时提高 **`PPTAGENT_LLM_MAX_OUTPUT_TOKENS`**（如 `131072`）。**DeepSeek-R1** 等若网关不支持关闭思考，只能依赖更大输出上限。
 - 输出 PPT 打不开：检查模板 `source.pptx` 是否完好；尝试切换 `PPTAGENT_DEFAULT_TEMPLATE=default`。

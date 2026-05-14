@@ -43,6 +43,14 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw.lower() in {"1", "true", "yes", "y", "on"}
 
 
+def _is_modelarts_maas_url(url: Optional[str]) -> bool:
+    """华为云 ModelArts MaaS OpenAI 兼容网关（含 v1/v2 路径）。"""
+
+    if not url:
+        return False
+    return "modelarts-maas.com" in url.lower()
+
+
 @dataclass(frozen=True)
 class LLMEndpoint:
     """单个 LLM 端点配置（OpenAI 兼容协议）。"""
@@ -91,6 +99,11 @@ class BridgeSettings:
     llm_max_output_tokens: int = 0
     # VLM 单独上限；为 0 时回退为与 llm_max_output_tokens 相同。
     vlm_max_output_tokens: int = 0
+    # 对华为 ModelArts MaaS 等网关做兼容：同时传 max_tokens、提高下限，并可选关闭「深度思考」以保留 JSON 输出额度。
+    llm_maas_compat: bool = False
+    llm_disable_thinking: bool = False
+    vlm_maas_compat: bool = False
+    vlm_disable_thinking: bool = False
     # 多文件合并后的 Markdown 最大字符数（Python 3 的 len 为 Unicode 码点数），与上游 PPTAgent 的预警尺度对齐。
     markdown_max_chars: int = 28000
 
@@ -117,9 +130,32 @@ class BridgeSettings:
             timeout=_env_int("PPTAGENT_VLM_TIMEOUT", 600),
         )
         workspace = Path(_env("BRIDGE_WORKSPACE", "/data/pptagent") or "/data/pptagent")
-        llm_max_out = _env_int("PPTAGENT_LLM_MAX_OUTPUT_TOKENS", 32768)
+        # 推理模型 + 结构化 JSON 需要更大 completion 上限；MaaS 下 bridge 还会再抬下限。
+        llm_max_out = _env_int("PPTAGENT_LLM_MAX_OUTPUT_TOKENS", 65536)
         vlm_max_out = _env_int("PPTAGENT_VLM_MAX_OUTPUT_TOKENS", 0)
         md_max = _env_int("PPTAGENT_MARKDOWN_MAX_CHARS", 28000)
+
+        llm_maas_compat = _env_bool(
+            "PPTAGENT_LLM_MAAS_COMPAT", _is_modelarts_maas_url(language.base_url)
+        )
+        vlm_maas_compat = _env_bool(
+            "PPTAGENT_VLM_MAAS_COMPAT",
+            _is_modelarts_maas_url(vision.base_url) if vision.is_configured else False,
+        )
+
+        # 未显式配置时：仅在对 MaaS 端点时默认关闭深度思考，避免 reasoning 占满额度导致 parse 失败。
+        raw_llm_dt = os.getenv("PPTAGENT_LLM_DISABLE_THINKING")
+        if raw_llm_dt is None or str(raw_llm_dt).strip() == "":
+            llm_disable_thinking = llm_maas_compat
+        else:
+            llm_disable_thinking = _env_bool("PPTAGENT_LLM_DISABLE_THINKING", False)
+
+        raw_vlm_dt = os.getenv("PPTAGENT_VLM_DISABLE_THINKING")
+        if raw_vlm_dt is None or str(raw_vlm_dt).strip() == "":
+            vlm_disable_thinking = vlm_maas_compat and vision.is_configured
+        else:
+            vlm_disable_thinking = _env_bool("PPTAGENT_VLM_DISABLE_THINKING", False)
+
         return cls(
             api_token=_env("BRIDGE_API_TOKEN", "") or "",
             host=_env("BRIDGE_HOST", "0.0.0.0") or "0.0.0.0",
@@ -136,6 +172,10 @@ class BridgeSettings:
             llm_max_output_tokens=llm_max_out,
             vlm_max_output_tokens=vlm_max_out,
             markdown_max_chars=md_max,
+            llm_maas_compat=llm_maas_compat,
+            llm_disable_thinking=llm_disable_thinking,
+            vlm_maas_compat=vlm_maas_compat,
+            vlm_disable_thinking=vlm_disable_thinking,
         )
 
     def ensure_workspace(self) -> None:

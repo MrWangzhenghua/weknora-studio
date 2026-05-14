@@ -165,6 +165,10 @@ services:
       - PPTAGENT_BRIDGE_MAX_FILE_MB=${PPTAGENT_BRIDGE_MAX_FILE_MB:-200}
       # 单知识点导出 Markdown 最大码点数；超出则自动降级为摘要类 chunk 再喂给 Bridge
       - PPTGEN_MARKDOWN_MAX_RUNES=${PPTGEN_MARKDOWN_MAX_RUNES:-28000}
+      # ========== 闪卡 Bridge（参考 genai-rag：主题 + 知识摘录 → LLM 闪卡）==========
+      - FLASHCARD_BRIDGE_URL=${FLASHCARD_BRIDGE_URL:-http://flashcard:8091}
+      - FLASHCARD_BRIDGE_TOKEN=${FLASHCARD_BRIDGE_TOKEN:-}
+      - FLASHCARD_BRIDGE_TIMEOUT_SEC=${FLASHCARD_BRIDGE_TIMEOUT_SEC:-180}
     depends_on:
       redis:
         condition: service_started
@@ -183,13 +187,17 @@ services:
   # 默认通过 `--profile pptagent` 或 `--profile full` 启用
   # ==========================================================================
   pptagent:
-    image: wechatopenai/weknora-pptagent:${WEKNORA_VERSION:-latest}
+    # 注意：Docker Hub 上可能不存在 wechatopenai/weknora-pptagent，拉取会 denied；使用本地构建标签
+    image: weknora-pptagent:${WEKNORA_VERSION:-local}
+    pull_policy: never
     build:
       context: .
       dockerfile: docker/Dockerfile.pptagent
       args:
         APT_MIRROR: ${APT_MIRROR:-}
         PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
+        PPTAGENT_GIT_REPO: ${PPTAGENT_GIT_REPO:-https://github.com/icip-cas/PPTAgent.git}
+        PPTAGENT_GIT_REF: ${PPTAGENT_GIT_REF:-main}
     container_name: WeKnora-pptagent
     profiles:
       - pptagent
@@ -213,7 +221,7 @@ services:
       - PPTAGENT_LLM_API_KEY=${PPTAGENT_LLM_API_KEY:-}
       - PPTAGENT_LLM_TIMEOUT=${PPTAGENT_LLM_TIMEOUT:-600}
       # 控制单次补全输出上限与合并 Markdown 长度，减轻 JSON 被截断、上下文过长问题
-      - PPTAGENT_LLM_MAX_OUTPUT_TOKENS=${PPTAGENT_LLM_MAX_OUTPUT_TOKENS:-32768}
+      - PPTAGENT_LLM_MAX_OUTPUT_TOKENS=${PPTAGENT_LLM_MAX_OUTPUT_TOKENS:-65536}
       - PPTAGENT_VLM_MAX_OUTPUT_TOKENS=${PPTAGENT_VLM_MAX_OUTPUT_TOKENS:-0}
       - PPTAGENT_MARKDOWN_MAX_CHARS=${PPTAGENT_MARKDOWN_MAX_CHARS:-28000}
       # ===== PPTAgent 视觉模型（可选）=====
@@ -231,15 +239,60 @@ services:
       - pptagent-data:/data/pptagent
       # HF 缓存持久化：避免每次重建容器都重新下载 fasttext-language-id 等文件
       - pptagent-hf-cache:/data/huggingface
-      # 把源码挂进容器，便于改动 bridge 代码不重新构建镜像
+      # 挂载 bridge 便于热改网关代码；勿挂载空的 ./integrations/PPTAgent，否则会覆盖镜像内已安装的 PPTAgent
       - ./integrations/pptagent_bridge:/opt/pptagent_bridge
-      - ./integrations/PPTAgent:/opt/PPTAgent
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:8090/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 90s
+    networks:
+      - WeKnora-network
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # ==========================================================================
+  # 闪卡 Bridge：轻量 FastAPI，将知识库 Markdown 交给 OpenAI 兼容接口生成闪卡 JSON
+  # 启用：`docker compose --profile flashcard up -d` 或 `--profile full`
+  # 设计参考：https://github.com/alikomurcu/genai-rag
+  # ==========================================================================
+  flashcard:
+    image: weknora-flashcard:${WEKNORA_VERSION:-local}
+    pull_policy: never
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.flashcard
+      args:
+        APT_MIRROR: ${APT_MIRROR:-}
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
+    container_name: WeKnora-flashcard
+    profiles:
+      - flashcard
+      - full
+    ports:
+      - "${FLASHCARD_BRIDGE_PORT:-8091}:8091"
+    environment:
+      - BRIDGE_HOST=0.0.0.0
+      - BRIDGE_PORT=8091
+      - BRIDGE_LOG_LEVEL=${FLASHCARD_LOG_LEVEL:-INFO}
+      - BRIDGE_API_TOKEN=${FLASHCARD_BRIDGE_TOKEN:-}
+      - FLASHCARD_CONTEXT_MAX_CHARS=${FLASHCARD_CONTEXT_MAX_CHARS:-120000}
+      - FLASHCARD_LLM_BASE_URL=${FLASHCARD_LLM_BASE_URL:-}
+      - FLASHCARD_LLM_MODEL=${FLASHCARD_LLM_MODEL:-}
+      - FLASHCARD_LLM_API_KEY=${FLASHCARD_LLM_API_KEY:-}
+      - FLASHCARD_LLM_TIMEOUT=${FLASHCARD_LLM_TIMEOUT:-120}
+      - FLASHCARD_LLM_MAX_OUTPUT_TOKENS=${FLASHCARD_LLM_MAX_OUTPUT_TOKENS:-8192}
+      - TZ=${TZ:-Asia/Shanghai}
+    volumes:
+      - ./integrations/flashcard_bridge:/opt/flashcard_bridge
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8091/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 25s
     networks:
       - WeKnora-network
     restart: unless-stopped

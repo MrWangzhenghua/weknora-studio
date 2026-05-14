@@ -25,7 +25,7 @@ from typing import List
 
 import httpx
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, status
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from . import __version__
@@ -270,9 +270,10 @@ async def preview_task_result(task_id: str) -> FileResponse:
 @app.delete(
     "/v1/tasks/{task_id}/permanent",
     status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
     dependencies=[Depends(_verify_token)],
 )
-async def purge_task_permanent(task_id: str) -> None:
+async def purge_task_permanent(task_id: str) -> Response:
     """永久删除任务记录及磁盘上的 PPT 与中间文件（仅终态可删）。"""
 
     manager: TaskManager = app.state.manager
@@ -285,6 +286,7 @@ async def purge_task_permanent(task_id: str) -> None:
             status_code=409,
             detail="任务尚未结束，请先取消或等待完成后再删除",
         )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @app.get(
