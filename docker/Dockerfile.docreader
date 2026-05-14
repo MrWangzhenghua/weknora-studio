@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # =========================
 # 构建阶段（轻量化：仅文档解析 + 图片提取，无 OCR/VLM）
 # =========================
@@ -11,8 +12,10 @@ RUN if [ -n "$APT_MIRROR" ]; then \
 
 WORKDIR /app
 
-# 安装构建依赖
-RUN apt-get update && apt-get install -y \
+# 安装构建依赖（apt 缓存加速重复 build）
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install -y \
     gcc \
     python3-dev \
     libjpeg-dev \
@@ -63,9 +66,10 @@ RUN if [ -z "$TARGETARCH" ]; then \
         rm -f ${PROTOC_PACKAGE}; \
     fi
 
-# 复制依赖文件
+# 复制依赖文件（uv 缓存加速重复 build）
 COPY docreader/pyproject.toml docreader/uv.lock ./
-RUN pip install uv --break-system-packages && \
+RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
+    pip install uv --break-system-packages && \
     python -m uv sync --locked --no-dev
 
 # 复制源代码和生成脚本
@@ -90,7 +94,9 @@ RUN if [ -n "$APT_MIRROR" ]; then \
 WORKDIR /app
 
 # 安装运行时依赖（已移除 OCR/PaddleOCR 相关依赖）
-RUN apt-get update && apt-get install -y \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install -y \
     libjpeg62-turbo \
     wget \
     gnupg \
@@ -141,9 +147,16 @@ ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
 
 COPY --from=builder /usr/local/bin /usr/local/bin
 
-# 安装 Playwright 浏览器（网页解析）
-RUN python -m playwright install webkit
-RUN python -m playwright install-deps webkit
+# 安装 Playwright：先下载到 cache mount（重复 build 快），再复制到镜像内供运行时使用
+RUN --mount=type=cache,target=/root/.cache/ms-playwright-dl,sharing=locked \
+    export PLAYWRIGHT_BROWSERS_PATH=/root/.cache/ms-playwright-dl && \
+    python -m playwright install webkit && \
+    mkdir -p /opt/ms-playwright && \
+    cp -a /root/.cache/ms-playwright-dl/. /opt/ms-playwright/
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    python -m playwright install-deps webkit
 
 COPY docreader/pyproject.toml docreader/uv.lock ./
 COPY --from=builder /app/docreader docreader

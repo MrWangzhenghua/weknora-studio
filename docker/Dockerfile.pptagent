@@ -17,14 +17,16 @@ ARG PPTAGENT_GIT_REF="main"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
     PIP_DEFAULT_TIMEOUT=120 \
     PIP_INDEX_URL=${PIP_INDEX_URL}
 
 WORKDIR /opt/pptagent
 
 # 系统依赖（PPTAgent 解析 PDF/Office 等需要）；git 用于克隆上游仓库
-RUN if [ -n "${APT_MIRROR}" ]; then \
+# apt / pip 使用 BuildKit 缓存，重复 compose build 时显著加速
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    if [ -n "${APT_MIRROR}" ]; then \
         sed -i "s@deb.debian.org@${APT_MIRROR}@g" /etc/apt/sources.list.d/debian.sources || true; \
     fi && \
     apt-get update && \
@@ -55,9 +57,10 @@ RUN rm -rf /opt/PPTAgent && \
 COPY integrations/pptagent_bridge /opt/pptagent_bridge
 
 # 安装 PPTAgent（editable 安装，便于开发时在 compose 里挂载覆盖 bridge）
-RUN pip install --upgrade pip && \
-    pip install --no-cache-dir -e /opt/PPTAgent && \
-    pip install --no-cache-dir -r /opt/pptagent_bridge/requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --cache-dir=/root/.cache/pip --upgrade pip && \
+    pip install --cache-dir=/root/.cache/pip -e /opt/PPTAgent && \
+    pip install --cache-dir=/root/.cache/pip -r /opt/pptagent_bridge/requirements.txt
 
 # 把 bridge 包加入 Python 搜索路径
 ENV PYTHONPATH=/opt:/opt/PPTAgent

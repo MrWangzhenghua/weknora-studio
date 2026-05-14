@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # 构建阶段
 FROM node:24-alpine AS build-stage
 
@@ -12,8 +13,9 @@ COPY package*.json ./
 COPY pnpm-workspace.yaml ./
 COPY packages/xlsx-0.20.2.tgz ./packages/xlsx-0.20.2.tgz
 
-# 安装依赖
-RUN npm ci
+# 安装依赖（npm 缓存：重复 build 加速）
+RUN --mount=type=cache,target=/root/.npm,sharing=locked \
+    npm ci --prefer-offline
 
 # 复制项目文件
 COPY . .

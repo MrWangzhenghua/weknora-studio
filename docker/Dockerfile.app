@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # Build stage
 FROM golang:1.26-bookworm AS builder
 
@@ -21,15 +22,29 @@ RUN if [ -n "$APK_MIRROR_ARG" ]; then \
     apt-get update && \
     apt-get install -y git build-essential libsqlite3-dev
 
-# Install migrate tool
-RUN go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
+# Install migrate tool（与下方 go build 共用编译缓存）
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
 
 # Copy go mod and sum files
 COPY go.mod go.sum ./
-RUN --mount=type=cache,target=/go/pkg/mod go mod download
+# 模块缓存 + 编译缓存：后者显著加速重复 docker build（首次仍接近全量编译）
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go mod download
 COPY cmd/download cmd/download
-RUN go run cmd/download/duckdb/duckdb.go
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go run cmd/download/duckdb/duckdb.go
 COPY . .
+
+# GetTask 在 pptgen_client_gettask.go；若缺失说明构建上下文未同步完整仓库（git pull / 重新 COPY）。
+RUN test -f internal/application/service/pptgen_client_gettask.go && \
+    grep -Fq 'func (c *PPTAgentBridgeClient) GetTask' internal/application/service/pptgen_client_gettask.go || \
+    (echo 'ERROR: missing pptgen_client_gettask.go or GetTask — sync full repo (git pull) before docker build.'; \
+     ls -la internal/application/service/pptgen_client*.go 2>/dev/null || true; \
+     exit 1)
 
 # Get version and commit info for build injection
 ARG VERSION_ARG
@@ -43,8 +58,10 @@ ENV COMMIT_ID=${COMMIT_ID_ARG}
 ENV BUILD_TIME=${BUILD_TIME_ARG}
 ENV GO_VERSION=${GO_VERSION_ARG}
 
-# Build the application with version info
-RUN --mount=type=cache,target=/go/pkg/mod make build-prod
+# Build the application with version info（go-build 缓存：未改依赖时大幅缩短本步耗时）
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    make build-prod
 RUN --mount=type=cache,target=/go/pkg/mod cp -r /go/pkg/mod/github.com/yanyiwu/ /app/yanyiwu/
 
 # Final stage

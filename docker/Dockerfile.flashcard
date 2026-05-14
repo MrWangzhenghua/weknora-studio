@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # 闪卡 Bridge：轻量 Python 服务，将知识库 Markdown 交给 OpenAI 兼容接口生成闪卡 JSON。
 # 设计对齐 docker/Dockerfile.pptagent 的「独立 sidecar」思路，不包含 genai-rag 全量依赖。
 
@@ -8,19 +9,21 @@ ARG PIP_INDEX_URL=https://pypi.org/simple
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
     PIP_INDEX_URL=${PIP_INDEX_URL}
 
 WORKDIR /opt
 
-RUN if [ -n "$APT_MIRROR" ]; then sed -i "s|deb.debian.org|$APT_MIRROR|g" /etc/apt/sources.list.d/debian.sources 2>/dev/null || true; fi \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    if [ -n "$APT_MIRROR" ]; then sed -i "s|deb.debian.org|$APT_MIRROR|g" /etc/apt/sources.list.d/debian.sources 2>/dev/null || true; fi \
     && apt-get update \
     && apt-get install -y --no-install-recommends curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 COPY integrations/flashcard_bridge /opt/flashcard_bridge
 
-RUN pip install --retries 5 --default-timeout 120 -r /opt/flashcard_bridge/requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --cache-dir=/root/.cache/pip --retries 5 --default-timeout 120 -r /opt/flashcard_bridge/requirements.txt
 
 ENV PYTHONPATH=/opt
 
