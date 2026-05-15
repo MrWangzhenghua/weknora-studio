@@ -29,6 +29,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         curl \
         ca-certificates \
         git \
+        pkg-config \
+        libcairo2-dev \
         libxml2 \
         libxslt1.1 \
         libjpeg62-turbo \
