@@ -521,6 +521,12 @@ class PPTGenerator:
             "不要任何解释文字。viewBox 必须为 \"0 0 1280 720\"，"
             "xmlns=\"http://www.w3.org/2000/svg\"。\n"
             "使用可转换为基础 DrawingML 的子集：<rect> <circle> <text> <image> <line> <path> <g>。\n"
+            "严禁使用以下（会导致导出 PPTX 失败）：<clipPath>、<mask>、<filter>、"
+            "<foreignObject>；以及 <use> 引用外部或 defs 内复杂节点。"
+            "尽量避免 <linearGradient>、<radialGradient>、<pattern>、<marker>、<symbol>（部分导出器不支持）；"
+            "优先用 theme 的纯色 fill / stroke。\n"
+            "禁止使用 clip-path / mask 属性及 style 中的 clip-path、mask。\n"
+            "圆角或裁切请用 <path> 近似，勿用 clipPath 裁切 <image>。\n"
             "整页背景请放在带 id 含 background 的 <g> 内（全屏 rect）。\n"
             "文字用 <text>，设置 font-family=\"Arial\" 或 \"Noto Sans SC\"，fill 对比度足够。\n"
             "版式与美观：标题区留白充足；正文与要点左对齐或网格对齐；主色与强调色与主题一致；"
@@ -547,7 +553,14 @@ class PPTGenerator:
         svg = _extract_svg_document(raw)
         if not svg:
             raise RuntimeError(f"第 {slide_index} 页未获得合法 SVG")
-        return svg
+        cleaned, changed = _sanitize_svg_for_drawingml_export(svg)
+        if changed:
+            logger.warning(
+                "slide %s/%s: removed unsupported SVG constructs for PPTX export (e.g. clipPath)",
+                slide_index,
+                slide_total,
+            )
+        return cleaned
 
 
 def _slide_stem(idx: int, slide: dict[str, Any]) -> str:
@@ -595,6 +608,36 @@ def _extract_svg_document(text: str) -> str:
         m2 = re.search(r"(<svg[\s\S]*?</svg>)", inner, re.I)
         return (m2.group(1) if m2 else inner).strip()
     return ""
+
+
+def _sanitize_svg_for_drawingml_export(svg: str) -> tuple[str, bool]:
+    """移除 svg_to_pptx drawingml_converter 不支持的节点/属性，避免 SvgNativeConversionError。
+
+    典型报错：``unsupported visual SVG element(s): .../clipPath``。
+    """
+    if not svg or "<svg" not in svg.lower():
+        return svg, False
+    orig = svg
+    out = svg
+
+    def _strip_block(tag: str, s: str) -> str:
+        s = re.sub(rf"<{tag}\b[^>]*/>", "", s, flags=re.IGNORECASE)
+        return re.sub(rf"<{tag}\b[^>]*>.*?</{tag}>", "", s, flags=re.IGNORECASE | re.DOTALL)
+
+    for t in ("clipPath", "mask", "filter", "foreignObject"):
+        out = _strip_block(t, out)
+
+    out = re.sub(r"<use\b[^>]*/>", "", out, flags=re.IGNORECASE)
+    out = re.sub(r"<use\b[^>]*>.*?</use>", "", out, flags=re.IGNORECASE | re.DOTALL)
+
+    out = re.sub(r"\sclip-path=\"[^\"]*\"", "", out, flags=re.IGNORECASE)
+    out = re.sub(r"\sclip-path='[^']*'", "", out, flags=re.IGNORECASE)
+    out = re.sub(r"\smask=\"[^\"]*\"", "", out, flags=re.IGNORECASE)
+    out = re.sub(r"\smask='[^']*'", "", out, flags=re.IGNORECASE)
+    out = re.sub(r"clip-path\s*:\s*url\([^)]*\)\s*;?", "", out, flags=re.IGNORECASE)
+    out = re.sub(r"mask\s*:\s*url\([^)]*\)\s*;?", "", out, flags=re.IGNORECASE)
+
+    return out, out != orig
 
 
 _MAAS_MIN_COMPLETION_TOKENS = 65536
