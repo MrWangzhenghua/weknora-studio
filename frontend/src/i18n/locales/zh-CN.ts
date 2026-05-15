@@ -1743,6 +1743,7 @@ export default {
     unknown: "未知错误",
     tryAgain: "请重试",
     networkError: "网络错误，请检查您的网络连接",
+    requestTimeout: "请求超时，请稍后重试或缩小知识库范围",
     invalidCredentials: "用户名或密码错误",
     tokenRefreshFailed: "Token刷新失败",
     pleaseRelogin: "请重新登录",

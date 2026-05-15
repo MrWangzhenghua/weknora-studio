@@ -62,6 +62,14 @@ async def generate_flashcards(
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"invalid meta json: {e}") from e
 
+    n_files = len(files or [])
+    logger.info(
+        "generate request topic=%r count=%s files=%d",
+        meta_obj.topic,
+        meta_obj.count,
+        n_files,
+    )
+
     parts: list[str] = []
     for uf in files or []:
         raw = await uf.read()
@@ -76,6 +84,12 @@ async def generate_flashcards(
     max_chars = max(4096, int(settings.context_max_chars))
     if len(merged) > max_chars:
         merged = merged[:max_chars] + "\n\n[... truncated by flashcard bridge ...]"
+
+    logger.info(
+        "generate merged_context_chars=%d (max=%d), calling LLM",
+        len(merged),
+        max_chars,
+    )
 
     try:
         cards, msg = await generate_flashcards_from_context(
@@ -112,6 +126,7 @@ async def generate_flashcards(
     citations: dict = {}
     if meta_obj.weknora_kb_id:
         citations["weknora_kb_id"] = meta_obj.weknora_kb_id
+    logger.info("generate done topic=%r cards=%d", meta_obj.topic, len(cards))
     return GenerateFlashcardResponse(
         topic=meta_obj.topic,
         flashcards=cards,

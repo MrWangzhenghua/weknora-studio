@@ -2504,6 +2504,7 @@ export default {
     unknown: 'Unknown error',
     tryAgain: 'Please try again',
     networkError: 'Network error, please check your connection',
+    requestTimeout: 'Request timed out. Retry later or narrow the knowledge scope.',
     invalidCredentials: 'Invalid username or password',
     tokenRefreshFailed: 'Token refresh failed',
     pleaseRelogin: 'Please log in again',

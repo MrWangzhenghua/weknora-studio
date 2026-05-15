@@ -1688,6 +1688,7 @@ export default {
     unknown: "알 수 없는 오류",
     tryAgain: "다시 시도해주세요",
     networkError: '네트워크 오류, 연결을 확인해 주세요',
+    requestTimeout: '요청 시간이 초과되었습니다. 나중에 다시 시도하거나 범위를 줄여 주세요.',
     invalidCredentials: '사용자 이름 또는 비밀번호가 올바르지 않습니다',
     tokenRefreshFailed: '토큰 갱신 실패',
     pleaseRelogin: '다시 로그인해 주세요',

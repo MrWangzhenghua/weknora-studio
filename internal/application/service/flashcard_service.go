@@ -64,13 +64,14 @@ func (s *FlashcardGenService) GenerateFromKnowledgeBase(
 	if len(included) == 0 {
 		return nil, errors.NewBadRequestError("知识库中没有可用于生成闪卡的文档（或所选文件均不可用）")
 	}
-	_ = skipped // 仅统计；若需可记录日志
+	logger.Infof(ctx, "[flashcard] kb=%s selected_docs=%d skipped_docs=%d", kbID, len(included), len(skipped))
 
 	files, _, err := CollectKnowledgeBridgeFiles(ctx, s.knowSvc, s.chunkSvc, included, BridgeInputModeChunks)
 	if err != nil {
 		closeBridgeFiles(files)
 		return nil, errors.NewInternalServerError("导出知识内容失败").WithDetails(err.Error())
 	}
+	logger.Infof(ctx, "[flashcard] kb=%s exported_markdown_parts=%d", kbID, len(files))
 
 	count := req.Count
 	if count <= 0 {
@@ -96,6 +97,9 @@ func (s *FlashcardGenService) GenerateFromKnowledgeBase(
 		closeBridgeFiles(files)
 		return nil, err
 	}
+
+	logger.Infof(ctx, "[flashcard] calling bridge kb=%s topic=%q count=%d lang=%s flash_llm_override=%v",
+		kbID, topic, count, lang, meta.FlashLLMBaseURL != "")
 
 	resp, err := s.client.Generate(ctx, meta, files)
 	if err != nil {

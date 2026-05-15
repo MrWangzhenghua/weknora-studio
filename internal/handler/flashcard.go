@@ -40,7 +40,8 @@ func (h *FlashcardGenHandler) GenerateFlashcards(c *gin.Context) {
 		c.Error(errors.NewBadRequestError("请填写主题 topic"))
 		return
 	}
-	logger.Infof(ctx, "[flashcard] generate kb=%s topic=%q count=%d", kbID, req.Topic, req.Count)
+	logger.Infof(ctx, "[flashcard] HTTP POST generate kb=%s topic=%q count=%d path=%s",
+		kbID, req.Topic, req.Count, c.FullPath())
 
 	res, err := h.svc.GenerateFromKnowledgeBase(ctx, kbID, &req)
 	if err != nil {

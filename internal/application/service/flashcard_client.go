@@ -125,6 +125,14 @@ func (c *FlashcardBridgeClient) Generate(ctx context.Context, meta *FlashcardBri
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	c.applyFlashAuth(req)
 
+	logger.Infof(
+		ctx,
+		"[flashcard] bridge POST %s/v1/generate multipart files=%d http_timeout=%s",
+		c.baseURL,
+		len(files),
+		c.httpClient.Timeout.String(),
+	)
+
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("flashcard bridge generate: %w", err)

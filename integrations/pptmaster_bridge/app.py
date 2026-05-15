@@ -1,4 +1,4 @@
-"""PPT Master Bridge FastAPI 应用入口（Python 包名 ``pptmaster_bridge``）。"""
+"""PPT Master Bridge FastAPI 应用入口（Python 包名 ``pptmaster_bridge``）。
 
 接口约定：
 - ``GET  /health``                       健康检查 / 配置探测

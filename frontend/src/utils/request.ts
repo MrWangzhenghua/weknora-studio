@@ -105,7 +105,15 @@ instance.interceptors.response.use(
     const originalRequest = error.config;
     
     if (!error.response) {
-      return Promise.reject({ message: t('error.networkError') });
+      // 无 response：多为断网、CORS、或 axios 超时（ECONNABORTED）；勿一律提示「检查网络」
+      const code = error?.code as string | undefined
+      const isTimeout =
+        code === 'ECONNABORTED' ||
+        (typeof error?.message === 'string' && error.message.toLowerCase().includes('timeout'))
+      return Promise.reject({
+        message: isTimeout ? t('error.requestTimeout') : t('error.networkError'),
+        code,
+      })
     }
     
     // 公开接口（auto-setup / login / register / oidc）的 401 不走 refresh 逻辑，直接返回错误

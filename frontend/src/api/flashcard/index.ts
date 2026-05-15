@@ -26,11 +26,15 @@ export interface ApiEnvelope<T> {
   data: T
 }
 
-/** 从知识库生成闪卡（同步，可能耗时数十秒） */
+/** 闪卡生成走 LLM，可能远超默认 axios 30s；与后端 FLASHCARD_BRIDGE_TIMEOUT_SEC（默认 180）对齐并留余量 */
+const FLASHCARD_GENERATE_TIMEOUT_MS = 300_000
+
+/** 从知识库生成闪卡（同步，可能耗时数十秒至数分钟） */
 export function generateFlashcards(kbId: string, body: FlashcardGenerateRequest) {
   return post(
     `/api/v1/knowledge-bases/${encodeURIComponent(kbId)}/flashcards/generate`,
     body,
+    { timeout: FLASHCARD_GENERATE_TIMEOUT_MS },
   ) as Promise<ApiEnvelope<FlashcardGenerateResult>>
 }
 
