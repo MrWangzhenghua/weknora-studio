@@ -1,4 +1,4 @@
-"""基于 PPT Master 导出链路的 PPT 生成。"""
+"""基于 PPT Master 导出链路的 PPT 生成。
 
 流程概要：
 1. 将知识库上传文件转为 Markdown（优先调用 ppt-master 仓库内 ``source_to_md`` 脚本）；
@@ -57,6 +57,35 @@ _DOC_EXTENSIONS = {
     ".typ",
 }
 _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".svg"}
+
+
+def _ascii_keywords_for_stock_search(text: str, max_words: int = 8) -> str:
+    """从文本中提取适合 Openverse / Wikimedia 的英文检索词。"""
+    if not (text or "").strip():
+        return ""
+    words = re.findall(r"[A-Za-z][A-Za-z0-9\-]*", text)
+    if not words:
+        return ""
+    out = " ".join(words[:max_words]).strip()
+    return out[:120] if out else ""
+
+
+def sanitize_image_query_for_openverse(raw: str, slide_title: str = "") -> str:
+    """清洗模型输出的 image_query：去换行与引号，优先提取英文关键词，降低搜图失败率。"""
+    s = (raw or "").strip()
+    if not s:
+        return ""
+    s = s.replace("\r", " ").replace("\n", " ").replace("\t", " ")
+    s = re.sub(r"[`'\"]+", " ", s)
+    s = re.sub(r"[\x00-\x1f\x7f]", "", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    q = _ascii_keywords_for_stock_search(s, max_words=8)
+    if len(q) >= 4:
+        return q
+    q2 = _ascii_keywords_for_stock_search(slide_title or "", max_words=8)
+    if len(q2) >= 4:
+        return q2
+    return ""
 
 
 def _repo_root() -> Path:
@@ -165,7 +194,7 @@ class PPTGenerator:
             raise RuntimeError("模型返回的大纲无效（slides 为空）")
 
         await ctx.progress_cb(TaskStatus.DRAFTING, 40, "检索配图（可选）")
-        await self._fetch_slide_images(slides, images_dir, workspace)
+        await self._fetch_slide_images(slides, images_dir)
 
         await ctx.progress_cb(TaskStatus.RENDERING, 45, "逐页生成 SVG")
         svg_paths: list[Path] = []
@@ -367,8 +396,12 @@ class PPTGenerator:
             "你是演示文稿策划。只输出一个 JSON 对象，不要 Markdown 围栏。"
             "字段: theme: {primary, accent} 两个主色十六进制;"
             "slides: 数组，每项含 n(序号从1), role(cover|content|section|closing),"
-            " title, bullets(字符串数组), speaker_notes, image_query(可空,英文关键词用于配图检索)。"
-            "内容语言与素材一致。封面含标题与副标题要点。"
+            " title, bullets(字符串数组), speaker_notes, image_query(可空)。"
+            "image_query 规则（极其重要，影响自动配图成败）："
+            "仅使用英文；2～8 个单词；描写可拍照的场景或物体，如 hospital corridor、blood test tubes、"
+            "team meeting whiteboard、healthy meal plate；禁止换行、引号、括号、化学式长串、整句中文标题；"
+            "医学主题用泛化英文词如 diabetes care、medical research lab；若无合适英文检索词则置空字符串 \"\" 。"
+            "内容语言与素材一致。封面含标题与副标题要点；整体信息层次清晰，便于后续设计高质量版式。"
         )
         raw = await _chat_text(
             endpoint,
@@ -381,10 +414,30 @@ class PPTGenerator:
             raise RuntimeError("大纲 JSON 解析失败")
         return data
 
-    async def _fetch_slide_images(self, slides: list[Any], images_dir: Path, workspace: Path) -> None:
+    async def _fetch_slide_images(self, slides: list[Any], images_dir: Path) -> None:
         script = _scripts_dir() / "image_search.py"
         if not script.is_file():
             return
+        min_w = max(320, int(self.settings.image_search_min_width))
+        min_h = max(240, int(self.settings.image_search_min_height))
+        sub_timeout = max(30, int(self.settings.image_search_subprocess_timeout))
+        fb = (self.settings.image_search_query_fallback_en or "").strip()[:120]
+
+        for slide in slides:
+            if not isinstance(slide, dict):
+                continue
+            raw_s = str(slide.get("image_query") or "").strip()
+            title = str(slide.get("title") or "")
+            cleaned = sanitize_image_query_for_openverse(raw_s, title)
+            if cleaned:
+                slide["image_query"] = cleaned
+            elif raw_s and fb:
+                slide["image_query"] = fb
+            elif raw_s:
+                slide.pop("image_query", None)
+            else:
+                slide.pop("image_query", None)
+
         for i, slide in enumerate(slides):
             if not isinstance(slide, dict):
                 continue
@@ -393,10 +446,11 @@ class PPTGenerator:
                 continue
             stem = _slide_stem(i, slide)
             fname = f"{stem}_photo.jpg"
+            q_final = str(q).strip()
             cmd = [
                 sys.executable,
                 str(script),
-                str(q).strip(),
+                q_final,
                 "--filename",
                 fname,
                 "-o",
@@ -406,11 +460,19 @@ class PPTGenerator:
                 "--slide",
                 stem,
                 "--min-width",
-                "800",
+                str(min_w),
                 "--min-height",
-                "600",
+                str(min_h),
             ]
             try:
+                logger.info(
+                    "image_search slide %s query=%r min=%sx%s timeout=%ss",
+                    stem,
+                    q_final[:200],
+                    min_w,
+                    min_h,
+                    sub_timeout,
+                )
                 r = await asyncio.to_thread(
                     subprocess.run,
                     cmd,
@@ -419,10 +481,16 @@ class PPTGenerator:
                     text=True,
                     encoding="utf-8",
                     errors="replace",
-                    timeout=120,
+                    timeout=sub_timeout,
                 )
                 if r.returncode != 0:
-                    logger.info("image_search skip slide %s: %s", stem, (r.stderr or "")[:200])
+                    err = (r.stderr or r.stdout or "").strip()
+                    logger.info(
+                        "image_search skip slide %s rc=%s: %s",
+                        stem,
+                        r.returncode,
+                        err[:500] if err else "(no stderr)",
+                    )
             except Exception:
                 logger.exception("image_search failed for %s", stem)
 
@@ -455,7 +523,10 @@ class PPTGenerator:
             "使用可转换为基础 DrawingML 的子集：<rect> <circle> <text> <image> <line> <path> <g>。\n"
             "整页背景请放在带 id 含 background 的 <g> 内（全屏 rect）。\n"
             "文字用 <text>，设置 font-family=\"Arial\" 或 \"Noto Sans SC\"，fill 对比度足够。\n"
-            "若需引用本地配图，仅使用相对路径 images/文件名（目录已存在）。\n"
+            "版式与美观：标题区留白充足；正文与要点左对齐或网格对齐；主色与强调色与主题一致；"
+            "适当使用留白与分组（g）区分模块；避免整页拥挤。\n"
+            "若需引用本地配图，仅使用相对路径 images/文件名（目录已存在）；"
+            "若有可用图片文件，至少在一处用 <image> 合理嵌入并控制宽高比，勿拉伸失真。\n"
             f"主题色: primary={primary}, accent={accent}。\n"
             f"当前第 {slide_index}/{slide_total} 页，角色: {slide.get('role','content')}。"
         )

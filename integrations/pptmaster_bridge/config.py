@@ -107,6 +107,14 @@ class BridgeSettings:
     # 多文件合并后的 Markdown 最大字符数（Python 3 的 len 为 Unicode 码点数）。
     markdown_max_chars: int = 28000
 
+    # ===== Openverse / Wikimedia 配图（image_search.py）=====
+    # 降低默认像素门槛以提高候选命中率（原 800x600 在公网图库过严）。
+    image_search_min_width: int = 640
+    image_search_min_height: int = 480
+    image_search_subprocess_timeout: int = 180
+    # 当模型输出的 image_query 无法清理为可用英文词时，若配置了非空则用作检索回退（可选）。
+    image_search_query_fallback_en: str = ""
+
     @classmethod
     def from_env(cls) -> "BridgeSettings":
         """从环境变量构建 ``BridgeSettings``。
@@ -115,6 +123,9 @@ class BridgeSettings:
         - ``BRIDGE_*``：网关自身行为控制。
         - ``PPTMASTER_LLM_*``：主语言模型。
         - ``PPTMASTER_VLM_*``：视觉模型，可选。
+        - ``PPTMASTER_IMAGE_MIN_WIDTH`` / ``PPTMASTER_IMAGE_MIN_HEIGHT``：配图最小分辨率（默认 640x480）。
+        - ``PPTMASTER_IMAGE_SEARCH_TIMEOUT_SEC``：单页 image_search 子进程超时（默认 180）。
+        - ``PPTMASTER_IMAGE_QUERY_FALLBACK_EN``：image_query 无法解析为英文词时的可选回退检索词。
         """
 
         language = LLMEndpoint(
@@ -134,6 +145,22 @@ class BridgeSettings:
         llm_max_out = _env_int("PPTMASTER_LLM_MAX_OUTPUT_TOKENS", 65536)
         vlm_max_out = _env_int("PPTMASTER_VLM_MAX_OUTPUT_TOKENS", 0)
         md_max = _env_int("PPTMASTER_MARKDOWN_MAX_CHARS", 28000)
+        img_min_w = _env_int("PPTMASTER_IMAGE_MIN_WIDTH", 640)
+        img_min_h = _env_int("PPTMASTER_IMAGE_MIN_HEIGHT", 480)
+        img_timeout = _env_int("PPTMASTER_IMAGE_SEARCH_TIMEOUT_SEC", 180)
+        if img_min_w < 320:
+            img_min_w = 320
+        if img_min_w > 4096:
+            img_min_w = 4096
+        if img_min_h < 240:
+            img_min_h = 240
+        if img_min_h > 4096:
+            img_min_h = 4096
+        if img_timeout < 30:
+            img_timeout = 30
+        if img_timeout > 600:
+            img_timeout = 600
+        img_fallback = (_env("PPTMASTER_IMAGE_QUERY_FALLBACK_EN", "") or "").strip()[:160]
 
         llm_maas_compat = _env_bool(
             "PPTMASTER_LLM_MAAS_COMPAT", _is_modelarts_maas_url(language.base_url)
@@ -172,6 +199,10 @@ class BridgeSettings:
             llm_max_output_tokens=llm_max_out,
             vlm_max_output_tokens=vlm_max_out,
             markdown_max_chars=md_max,
+            image_search_min_width=img_min_w,
+            image_search_min_height=img_min_h,
+            image_search_subprocess_timeout=img_timeout,
+            image_search_query_fallback_en=img_fallback,
             llm_maas_compat=llm_maas_compat,
             llm_disable_thinking=llm_disable_thinking,
             vlm_maas_compat=vlm_maas_compat,
