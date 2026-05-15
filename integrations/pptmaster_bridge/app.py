@@ -45,6 +45,14 @@ logger = logging.getLogger(__name__)
 _security = HTTPBearer(auto_error=False)
 
 
+def _meta_provides_llm_endpoint(meta: GenerateRequestMetadata) -> bool:
+    """单次任务在 meta 中自带的 LLM（WeKnora 从租户模型表解析后下发 ppt_llm_*）。"""
+
+    base = (meta.ppt_llm_base_url or "").strip()
+    model = (meta.ppt_llm_model or "").strip()
+    return bool(base and model)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logging.basicConfig(
@@ -57,7 +65,8 @@ async def lifespan(app: FastAPI):
     await manager.start()
     app.state.manager = manager
     logger.info(
-        "PPT Master Bridge ready: workspace=%s lm_configured=%s vlm_configured=%s",
+        "PPT Master Bridge ready: workspace=%s lm_env_configured=%s vlm_env_configured=%s "
+        "(若 lm_env 为 false，仍可在 /v1/generate 的 meta 中提供 ppt_llm_base_url + ppt_llm_model)",
         settings.workspace_dir,
         settings.language_model.is_configured,
         settings.vision_model.is_configured,
@@ -118,16 +127,20 @@ async def create_task(
     - ``files`` ：N 个待用于生成的文件（pdf/docx/md/...）。
     """
 
-    if not settings.language_model.is_configured:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="主语言模型未配置，请设置 PPTMASTER_LLM_BASE_URL / PPTMASTER_LLM_MODEL / PPTMASTER_LLM_API_KEY",
-        )
-
     try:
         meta_obj = GenerateRequestMetadata.model_validate_json(meta)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"meta JSON 不合法: {exc}")
+
+    if not settings.language_model.is_configured and not _meta_provides_llm_endpoint(meta_obj):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "主语言模型未就绪：请在 Bridge 环境配置 PPTMASTER_LLM_BASE_URL / PPTMASTER_LLM_MODEL "
+                "/ PPTMASTER_LLM_API_KEY，或在请求 meta 中提供非空的 ppt_llm_base_url 与 ppt_llm_model "
+                "（WeKnora 选择对话模型后会自动下发）"
+            ),
+        )
 
     manager: TaskManager = app.state.manager
     # 先把上传的文件落盘到一个临时目录，再交给 manager 安排任务。
