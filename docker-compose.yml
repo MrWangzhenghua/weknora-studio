@@ -223,6 +223,8 @@ services:
       - BRIDGE_MAX_FILE_MB=${PPTMASTER_BRIDGE_MAX_FILE_MB:-200}
       - PPTMASTER_REPO_ROOT=/opt/ppt-master
       # ===== 主语言模型（OpenAI 兼容）=====
+      # 占位符 ${PPTMASTER_LLM_*} 从「执行 compose 时的工作目录」下的 .env 注入；若在服务器上 lm_env_configured=False，
+      # 多半是未在同一目录放置 .env 或未 export 变量——此时须由 App 在请求 meta 中下发 ppt_llm_*（选模型或 KB 摘要模型回退）。
       - PPTMASTER_LLM_BASE_URL=${PPTMASTER_LLM_BASE_URL:-}
       - PPTMASTER_LLM_MODEL=${PPTMASTER_LLM_MODEL:-}
       - PPTMASTER_LLM_API_KEY=${PPTMASTER_LLM_API_KEY:-}

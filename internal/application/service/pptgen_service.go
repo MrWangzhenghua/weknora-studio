@@ -116,7 +116,19 @@ func (s *PPTGenService) CreateTask(
 		meta.NumPages = &n
 	}
 
-	if err := s.applyModelOverridesToMeta(ctx, req, meta); err != nil {
+	// 前端可不传 llm_model_id（沿用「Bridge 容器环境变量」）；但多数云部署未给 pptmaster 注入 PPTMASTER_LLM_*。
+	// 此时回退知识库创建时绑定的摘要/对话模型，向 Bridge meta 写入 ppt_llm_*，避免出现 503。
+	pptReq := *req
+	if strings.TrimSpace(pptReq.LLMModelID) == "" && strings.TrimSpace(kb.SummaryModelID) != "" {
+		pptReq.LLMModelID = strings.TrimSpace(kb.SummaryModelID)
+		logger.Infof(ctx, "[pptgen] using knowledge base SummaryModelID as LLM fallback: kb=%s model=%s", kbID, pptReq.LLMModelID)
+	}
+	if strings.TrimSpace(pptReq.VLMModelID) == "" && kb.VLMConfig.Enabled && strings.TrimSpace(kb.VLMConfig.ModelID) != "" {
+		pptReq.VLMModelID = strings.TrimSpace(kb.VLMConfig.ModelID)
+		logger.Infof(ctx, "[pptgen] using knowledge base VLMConfig.ModelID as VLM fallback: kb=%s model=%s", kbID, pptReq.VLMModelID)
+	}
+
+	if err := s.applyModelOverridesToMeta(ctx, &pptReq, meta); err != nil {
 		closeBridgeFiles(files)
 		return nil, err
 	}

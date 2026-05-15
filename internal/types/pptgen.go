@@ -71,7 +71,8 @@ type PPTGenCreateRequest struct {
 	Title string `json:"title"`
 	// IncludeFileIDs 仅包含指定知识 ID（可选，空数组表示包含全部）。
 	IncludeFileIDs []string `json:"include_file_ids"`
-	// LLMModelID 全局设置中的对话模型 ID（可选）；若填写则本任务使用该模型的 base_url/api_key，不再使用容器环境变量中的 PPTMASTER_LLM_*。
+	// LLMModelID 全局设置中的对话模型 ID（可选）。若不填：优先使用 Bridge 容器环境变量 PPTMASTER_LLM_*；
+	// 若 Bridge 也未配置 env，后端会回退使用当前知识库的 summary_model_id（创建知识库时绑定的摘要/对话模型）。
 	LLMModelID string `json:"llm_model_id,omitempty"`
 	// VLMModelID 全局设置中的视觉模型 ID（可选）；不填则沿用 Bridge 默认 VLM 或未配置时回退到 LLM。
 	VLMModelID string `json:"vlm_model_id,omitempty"`
