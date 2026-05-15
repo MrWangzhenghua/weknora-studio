@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # 闪卡 Bridge：轻量 Python 服务，将知识库 Markdown 交给 OpenAI 兼容接口生成闪卡 JSON。
-# 设计对齐 docker/Dockerfile.pptagent 的「独立 sidecar」思路，不包含 genai-rag 全量依赖。
+# 设计对齐 docker/Dockerfile.pptmaster 的「独立 sidecar」思路，不包含 genai-rag 全量依赖。
 
 FROM python:3.11-slim
 

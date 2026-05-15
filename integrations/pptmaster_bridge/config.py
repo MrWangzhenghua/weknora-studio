@@ -67,16 +67,16 @@ class LLMEndpoint:
 
 @dataclass(frozen=True)
 class BridgeSettings:
-    """PPTAgent Bridge 全部运行时配置。"""
+    """PPT Master Bridge 全部运行时配置。"""
 
     # ===== 鉴权 =====
-    # 与 WeKnora 共享的服务间 Token，避免 PPTAgent 被外部直接调用。
+    # 与 WeKnora 共享的服务间 Token，避免 Bridge 被外部直接调用。
     api_token: str = ""
 
     # ===== 服务运行 =====
     host: str = "0.0.0.0"
     port: int = 8090
-    workspace_dir: Path = Path("/data/pptagent")
+    workspace_dir: Path = Path("/data/pptmaster")
     log_level: str = "INFO"
     # 任务最长生存时间（小时），超期清理结果与临时文件。
     task_ttl_hours: int = 24
@@ -92,7 +92,7 @@ class BridgeSettings:
     language_model: LLMEndpoint = field(default_factory=lambda: LLMEndpoint("", "", ""))
     # 视觉模型（可选）：用于图片描述与视觉理解，未配置时回退到语言模型。
     vision_model: LLMEndpoint = field(default_factory=lambda: LLMEndpoint("", "", ""))
-    # 生成幻灯片所使用的模板名称（位于 pptagent/templates 目录下）。
+    # 生成幻灯片所使用的模板名称（历史字段；PPT Master 自动化路径下不使用）。
     default_template: str = "default"
     # 单次 Chat 补全的最大输出 token（写入 max_completion_tokens），减轻结构化 JSON 被截断无法解析。
     # 设为 0 表示不注入，完全沿用模型网关默认行为。
@@ -104,7 +104,7 @@ class BridgeSettings:
     llm_disable_thinking: bool = False
     vlm_maas_compat: bool = False
     vlm_disable_thinking: bool = False
-    # 多文件合并后的 Markdown 最大字符数（Python 3 的 len 为 Unicode 码点数），与上游 PPTAgent 的预警尺度对齐。
+    # 多文件合并后的 Markdown 最大字符数（Python 3 的 len 为 Unicode 码点数）。
     markdown_max_chars: int = 28000
 
     @classmethod
@@ -113,48 +113,48 @@ class BridgeSettings:
 
         变量约定：
         - ``BRIDGE_*``：网关自身行为控制。
-        - ``PPTAGENT_LLM_*``：主语言模型。
-        - ``PPTAGENT_VLM_*``：视觉模型，可选。
+        - ``PPTMASTER_LLM_*``：主语言模型。
+        - ``PPTMASTER_VLM_*``：视觉模型，可选。
         """
 
         language = LLMEndpoint(
-            base_url=_env("PPTAGENT_LLM_BASE_URL", "") or "",
-            model=_env("PPTAGENT_LLM_MODEL", "") or "",
-            api_key=_env("PPTAGENT_LLM_API_KEY", "") or "",
-            timeout=_env_int("PPTAGENT_LLM_TIMEOUT", 600),
+            base_url=_env("PPTMASTER_LLM_BASE_URL", "") or "",
+            model=_env("PPTMASTER_LLM_MODEL", "") or "",
+            api_key=_env("PPTMASTER_LLM_API_KEY", "") or "",
+            timeout=_env_int("PPTMASTER_LLM_TIMEOUT", 600),
         )
         vision = LLMEndpoint(
-            base_url=_env("PPTAGENT_VLM_BASE_URL", "") or "",
-            model=_env("PPTAGENT_VLM_MODEL", "") or "",
-            api_key=_env("PPTAGENT_VLM_API_KEY", "") or "",
-            timeout=_env_int("PPTAGENT_VLM_TIMEOUT", 600),
+            base_url=_env("PPTMASTER_VLM_BASE_URL", "") or "",
+            model=_env("PPTMASTER_VLM_MODEL", "") or "",
+            api_key=_env("PPTMASTER_VLM_API_KEY", "") or "",
+            timeout=_env_int("PPTMASTER_VLM_TIMEOUT", 600),
         )
-        workspace = Path(_env("BRIDGE_WORKSPACE", "/data/pptagent") or "/data/pptagent")
+        workspace = Path(_env("BRIDGE_WORKSPACE", "/data/pptmaster") or "/data/pptmaster")
         # 推理模型 + 结构化 JSON 需要更大 completion 上限；MaaS 下 bridge 还会再抬下限。
-        llm_max_out = _env_int("PPTAGENT_LLM_MAX_OUTPUT_TOKENS", 65536)
-        vlm_max_out = _env_int("PPTAGENT_VLM_MAX_OUTPUT_TOKENS", 0)
-        md_max = _env_int("PPTAGENT_MARKDOWN_MAX_CHARS", 28000)
+        llm_max_out = _env_int("PPTMASTER_LLM_MAX_OUTPUT_TOKENS", 65536)
+        vlm_max_out = _env_int("PPTMASTER_VLM_MAX_OUTPUT_TOKENS", 0)
+        md_max = _env_int("PPTMASTER_MARKDOWN_MAX_CHARS", 28000)
 
         llm_maas_compat = _env_bool(
-            "PPTAGENT_LLM_MAAS_COMPAT", _is_modelarts_maas_url(language.base_url)
+            "PPTMASTER_LLM_MAAS_COMPAT", _is_modelarts_maas_url(language.base_url)
         )
         vlm_maas_compat = _env_bool(
-            "PPTAGENT_VLM_MAAS_COMPAT",
+            "PPTMASTER_VLM_MAAS_COMPAT",
             _is_modelarts_maas_url(vision.base_url) if vision.is_configured else False,
         )
 
         # 未显式配置时：仅在对 MaaS 端点时默认关闭深度思考，避免 reasoning 占满额度导致 parse 失败。
-        raw_llm_dt = os.getenv("PPTAGENT_LLM_DISABLE_THINKING")
+        raw_llm_dt = os.getenv("PPTMASTER_LLM_DISABLE_THINKING")
         if raw_llm_dt is None or str(raw_llm_dt).strip() == "":
             llm_disable_thinking = llm_maas_compat
         else:
-            llm_disable_thinking = _env_bool("PPTAGENT_LLM_DISABLE_THINKING", False)
+            llm_disable_thinking = _env_bool("PPTMASTER_LLM_DISABLE_THINKING", False)
 
-        raw_vlm_dt = os.getenv("PPTAGENT_VLM_DISABLE_THINKING")
+        raw_vlm_dt = os.getenv("PPTMASTER_VLM_DISABLE_THINKING")
         if raw_vlm_dt is None or str(raw_vlm_dt).strip() == "":
             vlm_disable_thinking = vlm_maas_compat and vision.is_configured
         else:
-            vlm_disable_thinking = _env_bool("PPTAGENT_VLM_DISABLE_THINKING", False)
+            vlm_disable_thinking = _env_bool("PPTMASTER_VLM_DISABLE_THINKING", False)
 
         return cls(
             api_token=_env("BRIDGE_API_TOKEN", "") or "",
@@ -168,7 +168,7 @@ class BridgeSettings:
             max_file_mb=_env_int("BRIDGE_MAX_FILE_MB", 200),
             language_model=language,
             vision_model=vision,
-            default_template=_env("PPTAGENT_DEFAULT_TEMPLATE", "default") or "default",
+            default_template=_env("PPTMASTER_DEFAULT_TEMPLATE", "default") or "default",
             llm_max_output_tokens=llm_max_out,
             vlm_max_output_tokens=vlm_max_out,
             markdown_max_chars=md_max,

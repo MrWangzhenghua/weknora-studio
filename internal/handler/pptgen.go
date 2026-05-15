@@ -41,7 +41,7 @@ type createTaskRequest struct {
 
 // CreatePPTGenTask godoc
 // @Summary      触发 PPT 生成任务
-// @Description  使用知识库内的所有文件作为输入，调用 PPTAgent Bridge 生成 PPT。
+// @Description  使用知识库内的所有文件作为输入，调用 PPT Bridge（ppt-master 导出栈）生成 PPT。
 // @Tags         PPT 生成
 // @Accept       json
 // @Produce      json
@@ -271,7 +271,7 @@ func (h *PPTGenHandler) ListPPTGenTasks(c *gin.Context) {
 }
 
 // PPTGenHealth godoc
-// @Summary      PPTAgent Bridge 健康检查
+// @Summary      PPT Bridge 健康检查
 // @Tags         PPT 生成
 // @Produce      json
 // @Success      200  {object}  map[string]interface{}
@@ -282,7 +282,7 @@ func (h *PPTGenHandler) ListPPTGenTasks(c *gin.Context) {
 func (h *PPTGenHandler) PPTGenHealth(c *gin.Context) {
 	ctx := c.Request.Context()
 	if err := h.pptSvc.HealthCheck(ctx); err != nil {
-		c.Error(errors.NewInternalServerError("pptagent bridge unhealthy").WithDetails(err.Error()))
+		c.Error(errors.NewInternalServerError("pptmaster bridge unhealthy").WithDetails(err.Error()))
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"status": "ok"}})

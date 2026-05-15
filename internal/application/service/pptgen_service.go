@@ -27,11 +27,11 @@ import (
 //   - 实际生成进度从 Bridge 实时拉取，本地只缓存上次结果减少远端访问；
 //   - 单文件超过 Bridge 限制时直接跳过并记录原因，避免整批失败。
 type PPTGenService struct {
-	client    *PPTAgentBridgeClient
-	knowSvc   interfaces.KnowledgeService
-	kbSvc     interfaces.KnowledgeBaseService
-	chunkSvc  interfaces.ChunkService
-	modelSvc  interfaces.ModelService
+	client   *PPTMasterBridgeClient
+	knowSvc  interfaces.KnowledgeService
+	kbSvc    interfaces.KnowledgeBaseService
+	chunkSvc interfaces.ChunkService
+	modelSvc interfaces.ModelService
 
 	mu    sync.RWMutex
 	tasks map[string]*types.PPTGenTask // taskID -> task
@@ -41,7 +41,7 @@ type PPTGenService struct {
 
 // NewPPTGenService DI 构造函数。
 func NewPPTGenService(
-	client *PPTAgentBridgeClient,
+	client *PPTMasterBridgeClient,
 	knowSvc interfaces.KnowledgeService,
 	kbSvc interfaces.KnowledgeBaseService,
 	chunkSvc interfaces.ChunkService,
@@ -86,7 +86,8 @@ func (s *PPTGenService) CreateTask(
 	}
 
 	// 2) 组装 bridge 文件流。
-	files, totalBytes, err := CollectKnowledgeBridgeFiles(ctx, s.knowSvc, s.chunkSvc, included)
+	bridgeMode := ResolvePPTGenBridgeInputMode(kb.ChunkingConfig.PPTGenBridgeInputMode)
+	files, totalBytes, err := CollectKnowledgeBridgeFiles(ctx, s.knowSvc, s.chunkSvc, included, bridgeMode)
 	if err != nil {
 		// 已打开的流由 collectFiles 自己负责关闭出错的部分；剩余流随 client 关闭处理。
 		closeBridgeFiles(files)
@@ -103,9 +104,10 @@ func (s *PPTGenService) CreateTask(
 		WeKnoraKBID:     kbID,
 		WeKnoraUserID:   userID,
 		Extra: map[string]interface{}{
-			"weknora_kb_name":      kb.Name,
-			"weknora_total_files":  len(included),
-			"weknora_total_bytes":  totalBytes,
+			"weknora_kb_name":     kb.Name,
+			"weknora_total_files": len(included),
+			"weknora_total_bytes": totalBytes,
+			"weknora_bridge_input_mode": bridgeMode,
 		},
 	}
 	if req.NumPages > 0 {
@@ -121,7 +123,7 @@ func (s *PPTGenService) CreateTask(
 	bridgeResp, err := s.client.CreateTask(ctx, meta, files)
 	if err != nil {
 		logger.Errorf(ctx, "[pptgen] bridge create failed: %v", err)
-		return nil, errors.NewInternalServerError("pptagent bridge create failed").WithDetails(err.Error())
+		return nil, errors.NewInternalServerError("pptmaster bridge create failed").WithDetails(err.Error())
 	}
 
 	now := time.Now()
@@ -165,9 +167,9 @@ func (s *PPTGenService) GetTask(ctx context.Context, taskID string) (*types.PPTG
 	info, err := s.client.GetTask(ctx, task.BridgeTaskID)
 	if err != nil {
 		// Bridge 端找不到任务时通常是已 GC 或 Bridge 重启，标记失败以便前端重试。
-		if err == ErrPPTAgentTaskNotFound {
+		if err == ErrPPTMasterTaskNotFound {
 			task.Status = types.PPTGenStatusFailed
-			task.Error = "PPTAgent Bridge 已丢失任务，请重试"
+			task.Error = "PPT 生成服务已丢失任务，请重试"
 			task.Message = task.Error
 			task.UpdatedAt = time.Now()
 			s.storeTask(task)
@@ -186,7 +188,7 @@ func (s *PPTGenService) CancelTask(ctx context.Context, taskID string) (*types.P
 		return nil, errors.NewNotFoundError("ppt generation task not found")
 	}
 	info, err := s.client.CancelTask(ctx, task.BridgeTaskID)
-	if err != nil && err != ErrPPTAgentTaskNotFound {
+	if err != nil && err != ErrPPTMasterTaskNotFound {
 		return nil, errors.NewInternalServerError("cancel bridge task failed").WithDetails(err.Error())
 	}
 	if info != nil {
@@ -211,7 +213,7 @@ func (s *PPTGenService) DownloadResult(ctx context.Context, taskID string) (io.R
 	}
 	stream, name, err := s.client.DownloadResult(ctx, task.BridgeTaskID)
 	if err != nil {
-		if err == ErrPPTAgentResultNotReady {
+		if err == ErrPPTMasterResultNotReady {
 			return nil, "", errors.NewBadRequestError("ppt result not ready")
 		}
 		return nil, "", errors.NewInternalServerError("download bridge result failed").WithDetails(err.Error())
@@ -256,7 +258,7 @@ func (s *PPTGenService) HealthCheck(ctx context.Context) error {
 
 // ================ 内部 helpers ================
 
-// pptgenMarkdownMaxRunes 单份知识导出 Markdown 的码点上限（与 PPTAgent 内部对超长输入的预警尺度同量级）。
+// pptgenMarkdownMaxRunes 单份知识导出 Markdown 的码点上限（与 Bridge 合并输入截断尺度同量级）。
 // 超出后优先改为仅摘要类 chunk；仍超长则硬截断。可通过环境变量 PPTGEN_MARKDOWN_MAX_RUNES 调整。
 func pptgenMarkdownMaxRunes() int {
 	v := strings.TrimSpace(os.Getenv("PPTGEN_MARKDOWN_MAX_RUNES"))
@@ -423,7 +425,7 @@ func (s *PPTGenService) PurgeTask(ctx context.Context, taskID string) error {
 		return errors.NewNotFoundError("ppt generation task not found")
 	}
 	err := s.client.PurgeTask(ctx, t.BridgeTaskID)
-	if err != nil && err != ErrPPTAgentTaskNotFound {
+	if err != nil && err != ErrPPTMasterTaskNotFound {
 		if strings.Contains(strings.ToLower(err.Error()), "conflict") ||
 			strings.Contains(err.Error(), "尚未结束") {
 			return errors.NewBadRequestError("任务尚未结束，请取消或等待完成后再删除")

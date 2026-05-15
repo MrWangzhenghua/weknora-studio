@@ -18,7 +18,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/logger"
 )
 
-// PPTAgentBridgeClient 是 WeKnora 调用 PPTAgent Bridge 的 HTTP 客户端。
+// PPTMasterBridgeClient 是 WeKnora 调用 PPT Master Bridge 的 HTTP 客户端。
 //
 // 选择 HTTP/JSON 而非 gRPC 的理由：
 //  1. PPT 生成是低 QPS、高耗时的任务，HTTP 异步轮询模式开发成本最低；
@@ -26,24 +26,24 @@ import (
 //  3. 上传文件场景多 part 数量不固定，REST + multipart 比 protobuf 更适合。
 //
 // 鉴权：通过 Bearer Token（共享密钥）实现服务间认证。Token 通过环境变量
-// PPTAGENT_BRIDGE_TOKEN 注入；生产环境建议放在 secret 管理系统中。
-type PPTAgentBridgeClient struct {
+// PPTMASTER_BRIDGE_TOKEN 注入；生产环境建议放在 secret 管理系统中。
+type PPTMasterBridgeClient struct {
 	baseURL     string
 	token       string
 	httpClient  *http.Client
 	maxFileSize int64
 }
 
-// NewPPTAgentBridgeClient 构造客户端。配置来源：
-//   - PPTAGENT_BRIDGE_URL    （默认 http://pptagent:8090）
-//   - PPTAGENT_BRIDGE_TOKEN  （默认空，关闭鉴权，仅推荐内网部署）
-//   - PPTAGENT_BRIDGE_TIMEOUT_SEC （默认 60，单次普通请求超时）
-func NewPPTAgentBridgeClient() *PPTAgentBridgeClient {
-	baseURL := strings.TrimRight(getenvDefault("PPTAGENT_BRIDGE_URL", "http://pptagent:8090"), "/")
-	token := os.Getenv("PPTAGENT_BRIDGE_TOKEN")
-	timeoutSec := getenvIntDefault("PPTAGENT_BRIDGE_TIMEOUT_SEC", 60)
-	maxFile := int64(getenvIntDefault("PPTAGENT_BRIDGE_MAX_FILE_MB", 200)) * 1024 * 1024
-	return &PPTAgentBridgeClient{
+// NewPPTMasterBridgeClient 构造客户端。配置来源：
+//   - PPTMASTER_BRIDGE_URL    （默认 http://pptmaster:8090）
+//   - PPTMASTER_BRIDGE_TOKEN  （默认空，关闭鉴权，仅推荐内网部署）
+//   - PPTMASTER_BRIDGE_TIMEOUT_SEC （默认 60，单次普通请求超时）
+func NewPPTMasterBridgeClient() *PPTMasterBridgeClient {
+	baseURL := strings.TrimRight(getenvDefault("PPTMASTER_BRIDGE_URL", "http://pptmaster:8090"), "/")
+	token := os.Getenv("PPTMASTER_BRIDGE_TOKEN")
+	timeoutSec := getenvIntDefault("PPTMASTER_BRIDGE_TIMEOUT_SEC", 60)
+	maxFile := int64(getenvIntDefault("PPTMASTER_BRIDGE_MAX_FILE_MB", 200)) * 1024 * 1024
+	return &PPTMasterBridgeClient{
 		baseURL:     baseURL,
 		token:       token,
 		httpClient:  &http.Client{Timeout: time.Duration(timeoutSec) * time.Second},
@@ -107,7 +107,7 @@ type BridgeCreateResponse struct {
 //
 // 上传过程中文件 Reader 会被流式读取，每个 file 在写完后即被关闭。
 // 调用方在外层不需要再次关闭。
-func (c *PPTAgentBridgeClient) CreateTask(
+func (c *PPTMasterBridgeClient) CreateTask(
 	ctx context.Context,
 	meta *BridgeCreateMeta,
 	files []BridgeFile,
@@ -179,7 +179,7 @@ func (c *PPTAgentBridgeClient) CreateTask(
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return nil, fmt.Errorf("decode bridge create response: %w", err)
 	}
-	logger.Infof(ctx, "[pptagent] bridge task created: %s", out.TaskID)
+	logger.Infof(ctx, "[pptmaster] bridge task created: %s", out.TaskID)
 	return &out, nil
 }
 
@@ -198,7 +198,7 @@ type BridgeLLMTestResponse struct {
 }
 
 // TestLLM 调用 Bridge 探测 OpenAI 兼容 Chat 接口。
-func (c *PPTAgentBridgeClient) TestLLM(ctx context.Context, body *BridgeLLMTestRequest) (*BridgeLLMTestResponse, error) {
+func (c *PPTMasterBridgeClient) TestLLM(ctx context.Context, body *BridgeLLMTestRequest) (*BridgeLLMTestResponse, error) {
 	b, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
@@ -225,7 +225,7 @@ func (c *PPTAgentBridgeClient) TestLLM(ctx context.Context, body *BridgeLLMTestR
 }
 
 // PurgeTask 永久删除 Bridge 端任务及磁盘文件（仅终态）。
-func (c *PPTAgentBridgeClient) PurgeTask(ctx context.Context, bridgeTaskID string) error {
+func (c *PPTMasterBridgeClient) PurgeTask(ctx context.Context, bridgeTaskID string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete,
 		c.baseURL+"/v1/tasks/"+url.PathEscape(bridgeTaskID)+"/permanent", nil)
 	if err != nil {
@@ -238,7 +238,7 @@ func (c *PPTAgentBridgeClient) PurgeTask(ctx context.Context, bridgeTaskID strin
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
-		return ErrPPTAgentTaskNotFound
+		return ErrPPTMasterTaskNotFound
 	}
 	if resp.StatusCode == http.StatusConflict {
 		return fmt.Errorf("bridge purge conflict: task still running")
@@ -250,7 +250,7 @@ func (c *PPTAgentBridgeClient) PurgeTask(ctx context.Context, bridgeTaskID strin
 }
 
 // PreviewResult 拉取 Bridge 生成的 PDF 预览流。
-func (c *PPTAgentBridgeClient) PreviewResult(ctx context.Context, bridgeTaskID string) (io.ReadCloser, error) {
+func (c *PPTMasterBridgeClient) PreviewResult(ctx context.Context, bridgeTaskID string) (io.ReadCloser, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
 		c.baseURL+"/v1/tasks/"+url.PathEscape(bridgeTaskID)+"/preview", nil)
 	if err != nil {
@@ -265,7 +265,7 @@ func (c *PPTAgentBridgeClient) PreviewResult(ctx context.Context, bridgeTaskID s
 	}
 	if resp.StatusCode == http.StatusNotFound {
 		resp.Body.Close()
-		return nil, ErrPPTAgentTaskNotFound
+		return nil, ErrPPTMasterTaskNotFound
 	}
 	if resp.StatusCode >= 400 {
 		body := readBodySnippet(resp.Body)
@@ -276,7 +276,7 @@ func (c *PPTAgentBridgeClient) PreviewResult(ctx context.Context, bridgeTaskID s
 }
 
 // CancelTask 取消任务。
-func (c *PPTAgentBridgeClient) CancelTask(ctx context.Context, taskID string) (*BridgeTaskInfo, error) {
+func (c *PPTMasterBridgeClient) CancelTask(ctx context.Context, taskID string) (*BridgeTaskInfo, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.baseURL+"/v1/tasks/"+url.PathEscape(taskID), nil)
 	if err != nil {
 		return nil, err
@@ -288,7 +288,7 @@ func (c *PPTAgentBridgeClient) CancelTask(ctx context.Context, taskID string) (*
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, ErrPPTAgentTaskNotFound
+		return nil, ErrPPTMasterTaskNotFound
 	}
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("bridge cancel returned %d: %s", resp.StatusCode, readBodySnippet(resp.Body))
@@ -305,7 +305,7 @@ func (c *PPTAgentBridgeClient) CancelTask(ctx context.Context, taskID string) (*
 //
 // 注意：此方法使用独立的 http.Client（无超时）以支持大文件下载；调用方应通过
 // ctx 控制取消。
-func (c *PPTAgentBridgeClient) DownloadResult(ctx context.Context, taskID string) (io.ReadCloser, string, error) {
+func (c *PPTMasterBridgeClient) DownloadResult(ctx context.Context, taskID string) (io.ReadCloser, string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
 		c.baseURL+"/v1/tasks/"+url.PathEscape(taskID)+"/file", nil)
 	if err != nil {
@@ -318,11 +318,11 @@ func (c *PPTAgentBridgeClient) DownloadResult(ctx context.Context, taskID string
 	}
 	if resp.StatusCode == http.StatusNotFound {
 		resp.Body.Close()
-		return nil, "", ErrPPTAgentTaskNotFound
+		return nil, "", ErrPPTMasterTaskNotFound
 	}
 	if resp.StatusCode == http.StatusConflict {
 		resp.Body.Close()
-		return nil, "", ErrPPTAgentResultNotReady
+		return nil, "", ErrPPTMasterResultNotReady
 	}
 	if resp.StatusCode >= 400 {
 		body := readBodySnippet(resp.Body)
@@ -337,7 +337,7 @@ func (c *PPTAgentBridgeClient) DownloadResult(ctx context.Context, taskID string
 }
 
 // Health 探测 Bridge 是否就绪。
-func (c *PPTAgentBridgeClient) Health(ctx context.Context) error {
+func (c *PPTMasterBridgeClient) Health(ctx context.Context) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/health", nil)
 	if err != nil {
 		return err
@@ -354,24 +354,24 @@ func (c *PPTAgentBridgeClient) Health(ctx context.Context) error {
 }
 
 // MaxFileSize 单文件上限（字节）。0 表示不限制。
-func (c *PPTAgentBridgeClient) MaxFileSize() int64 {
+func (c *PPTMasterBridgeClient) MaxFileSize() int64 {
 	return c.maxFileSize
 }
 
 // BaseURL 返回当前指向的 Bridge 地址，便于诊断输出。
-func (c *PPTAgentBridgeClient) BaseURL() string {
+func (c *PPTMasterBridgeClient) BaseURL() string {
 	return c.baseURL
 }
 
 // ============== helpers ==============
 
-// ErrPPTAgentTaskNotFound 表示 Bridge 中找不到任务（一般是过期被 GC）。
-var ErrPPTAgentTaskNotFound = errors.New("pptagent bridge task not found")
+// ErrPPTMasterTaskNotFound 表示 Bridge 中找不到任务（一般是过期被 GC）。
+var ErrPPTMasterTaskNotFound = errors.New("pptmaster bridge task not found")
 
-// ErrPPTAgentResultNotReady 表示任务尚未完成，结果文件不可下载。
-var ErrPPTAgentResultNotReady = errors.New("pptagent bridge result not ready")
+// ErrPPTMasterResultNotReady 表示任务尚未完成，结果文件不可下载。
+var ErrPPTMasterResultNotReady = errors.New("pptmaster bridge result not ready")
 
-func (c *PPTAgentBridgeClient) applyAuth(req *http.Request) {
+func (c *PPTMasterBridgeClient) applyAuth(req *http.Request) {
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}

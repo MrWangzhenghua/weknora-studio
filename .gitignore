@@ -59,3 +59,6 @@ fix-docker.sh
 
 # WeChat Mini Program local/private configuration
 miniprogram/project.private.config.json
+
+# 本地克隆的 ppt-master 全量仓库（仅调试用，勿提交）
+integrations/ppt-master-upstream/

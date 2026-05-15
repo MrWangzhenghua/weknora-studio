@@ -10,7 +10,7 @@ import (
 // PPTGenService 提供"从知识库生成 PPT"的业务能力。
 // 实现负责：
 //  1. 收集知识库内可用的文件内容；
-//  2. 调用 PPTAgent Bridge 创建生成任务；
+//  2. 调用 PPT Bridge 创建生成任务；
 //  3. 缓存本地任务状态供前端查询；
 //  4. 当任务完成后从 Bridge 下载结果文件，再回传给前端。
 type PPTGenService interface {

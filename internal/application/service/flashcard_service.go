@@ -66,7 +66,7 @@ func (s *FlashcardGenService) GenerateFromKnowledgeBase(
 	}
 	_ = skipped // 仅统计；若需可记录日志
 
-	files, _, err := CollectKnowledgeBridgeFiles(ctx, s.knowSvc, s.chunkSvc, included)
+	files, _, err := CollectKnowledgeBridgeFiles(ctx, s.knowSvc, s.chunkSvc, included, BridgeInputModeChunks)
 	if err != nil {
 		closeBridgeFiles(files)
 		return nil, errors.NewInternalServerError("导出知识内容失败").WithDetails(err.Error())

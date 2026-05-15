@@ -302,8 +302,8 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(handler.NewDataSourceHandler))
 	// Wiki page handler
 	must(container.Provide(handler.NewWikiPageHandler))
-	// PPT 生成集成（PPTAgent Bridge）
-	must(container.Provide(service.NewPPTAgentBridgeClient))
+	// PPT 生成集成（PPT Master Bridge HTTP 客户端）
+	must(container.Provide(service.NewPPTMasterBridgeClient))
 	must(container.Provide(service.NewPPTGenService))
 	must(container.Provide(handler.NewPPTGenHandler))
 	// 闪卡生成（Flashcard Bridge，参考 genai-rag 流程）

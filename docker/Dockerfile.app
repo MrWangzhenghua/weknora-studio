@@ -41,7 +41,7 @@ COPY . .
 
 # GetTask 在 pptgen_client_gettask.go；若缺失说明构建上下文未同步完整仓库（git pull / 重新 COPY）。
 RUN test -f internal/application/service/pptgen_client_gettask.go && \
-    grep -Fq 'func (c *PPTAgentBridgeClient) GetTask' internal/application/service/pptgen_client_gettask.go || \
+    grep -Fq 'func (c *PPTMasterBridgeClient) GetTask' internal/application/service/pptgen_client_gettask.go || \
     (echo 'ERROR: missing pptgen_client_gettask.go or GetTask — sync full repo (git pull) before docker build.'; \
      ls -la internal/application/service/pptgen_client*.go 2>/dev/null || true; \
      exit 1)

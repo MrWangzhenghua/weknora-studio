@@ -21,13 +21,13 @@ export interface CreatePPTGenRequest {
   num_pages?: number
   /** 目标语言：zh / en / auto */
   language?: string
-  /** 模板名称（位于 PPTAgent 模板目录） */
+  /** 模板名称（可选；PPT Master 路径下多为历史字段，可留空） */
   template?: string
   /** PPT 标题；不填时取知识库名 */
   title?: string
   /** 仅包含指定 knowledge ID；不填表示包含全部 */
   include_file_ids?: string[]
-  /** 全局设置中的对话模型 ID；不填则使用 Bridge 环境变量 PPTAGENT_LLM_* */
+  /** 全局设置中的对话模型 ID；不填则使用 Bridge 环境变量 PPTMASTER_LLM_* */
   llm_model_id?: string
   /** 全局设置中的 VLLM 模型 ID；不填则使用 Bridge 默认 */
   vlm_model_id?: string

@@ -1,10 +1,10 @@
 export default {
-  // PPTAgent integration
+  // PPT Master integration
   pptGen: {
     title: 'Generate PPT',
     entry: 'Generate PPT',
-    entryTooltip: 'Generate a PPT from all files in this knowledge base via PPTAgent',
-    hint: 'WeKnora will collect every parseable file in this knowledge base and call PPTAgent to assemble a slide deck. The process can take seconds to minutes — please be patient.',
+    entryTooltip: 'Generate a PPT from all files in this knowledge base via PPT Master Bridge',
+    hint: 'WeKnora will collect every parseable file in this knowledge base and call the PPT Master pipeline to assemble an editable slide deck. The process can take seconds to minutes — please be patient.',
     instruction: 'Custom instruction (optional)',
     instructionPlaceholder: 'e.g. Build an executive summary deck based on this research report',
     numPages: 'Number of slides',
@@ -12,7 +12,7 @@ export default {
     language: 'Language',
     languageAuto: 'Auto',
     template: 'Template',
-    templatePlaceholder: 'Optional; leave blank to use the default template',
+    templatePlaceholder: 'Optional; leave blank for PPT Master free-form layout',
     submit: 'Start generating',
     cancelTask: 'Cancel task',
     restart: 'Generate again',
@@ -33,8 +33,8 @@ export default {
     pickOrCreate: 'Select a task on the left to view progress, or tap “New task”.',
     llmModel: 'Chat model (optional)',
     vlmModel: 'Vision model (optional)',
-    llmPlaceholder: 'Leave empty to use deployment PPTAGENT_LLM_*',
-    vlmPlaceholder: 'Leave empty to use deployment PPTAGENT_VLM_*',
+    llmPlaceholder: 'Leave empty to use deployment PPTMASTER_LLM_*',
+    vlmPlaceholder: 'Leave empty to use deployment PPTMASTER_VLM_*',
     testModels: 'Test connection',
     modelHelp: 'Same source as System Settings → Model configuration; credentials are read by the server and never sent to the browser.',
     tabProgress: 'Progress',

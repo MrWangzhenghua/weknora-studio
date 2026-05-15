@@ -82,7 +82,7 @@ class GenerateRequestMetadata(BaseModel):
         None, description="目标语言：zh / en；默认根据输入内容自动识别"
     )
     template: Optional[str] = Field(
-        None, description="模板名称，需位于 pptagent/templates 目录下"
+        None, description="历史字段；PPT Master 路径下不使用固定 .pptx 模板"
     )
     title: Optional[str] = Field(None, description="知识库名 / 演示主题，用作 PPT 标题")
     # 透传字段，便于 WeKnora 关联任务上下文。
@@ -92,7 +92,7 @@ class GenerateRequestMetadata(BaseModel):
     # 透传任意扩展字段。
     extra: Dict[str, Any] = Field(default_factory=dict)
     # ---------- 单次任务覆盖的 LLM / VLM（由 WeKnora 从全局模型配置解析后下发）----------
-    # 若四项齐全则本任务使用此处配置，否则回退到环境变量 PPTAGENT_LLM_* / PPTAGENT_VLM_*。
+    # 若四项齐全则本任务使用此处配置，否则回退到环境变量 PPTMASTER_LLM_* / PPTMASTER_VLM_*。
     ppt_llm_base_url: Optional[str] = Field(None, description="OpenAI 兼容 Chat Completions 根 URL")
     ppt_llm_model: Optional[str] = Field(None, description="模型名称")
     ppt_llm_api_key: Optional[str] = Field(None, description="API Key")

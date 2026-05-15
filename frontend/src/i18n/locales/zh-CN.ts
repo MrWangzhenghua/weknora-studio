@@ -1,10 +1,10 @@
 export default {
-  // PPTAgent 集成相关文案
+  // PPT Master 生成相关文案
   pptGen: {
     title: "生成 PPT",
     entry: "生成 PPT",
-    entryTooltip: "基于本知识库的所有文件，调用 PPTAgent 生成 PPT",
-    hint: "系统将把当前知识库内所有可解析文件作为输入，调用 PPTAgent 智能生成 PPT。整个过程可能需要数十秒到数分钟，请耐心等待。",
+    entryTooltip: "基于本知识库的所有文件，通过 PPT Master Bridge 生成 PPT",
+    hint: "系统将把当前知识库内所有可解析文件作为输入，由 PPT Master 流水线生成可编辑 PPT。整个过程可能需要数十秒到数分钟，请耐心等待。",
     instruction: "生成提示词（可选）",
     instructionPlaceholder: "例如：请以这份产品调研报告为基础，输出一份面向高管的总结演示",
     numPages: "目标页数",
@@ -12,7 +12,7 @@ export default {
     language: "语言",
     languageAuto: "自动",
     template: "模板",
-    templatePlaceholder: "可选；留空使用默认模板",
+    templatePlaceholder: "可选；PPT Master 路径下通常留空",
     submit: "开始生成",
     cancelTask: "取消任务",
     restart: "重新生成",
@@ -33,8 +33,8 @@ export default {
     pickOrCreate: "请从左侧选择任务查看进度，或点击「新建任务」",
     llmModel: "对话模型（可选）",
     vlmModel: "视觉模型（可选）",
-    llmPlaceholder: "不选则使用部署环境 PPTAGENT_LLM_*",
-    vlmPlaceholder: "不选则使用部署环境 PPTAGENT_VLM_*",
+    llmPlaceholder: "不选则使用部署环境 PPTMASTER_LLM_*",
+    vlmPlaceholder: "不选则使用部署环境 PPTMASTER_VLM_*",
     testModels: "测试连接",
     modelHelp: "与「系统设置 → 模型配置」相同的数据源；凭据由后端读取，不会传到浏览器。",
     tabProgress: "进度",

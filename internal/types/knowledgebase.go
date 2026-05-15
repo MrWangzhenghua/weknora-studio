@@ -162,6 +162,9 @@ type ChunkingConfig struct {
 	// Languages hints the heuristic patterns. Empty = auto-detect from content.
 	// Examples: ["de"], ["en", "zh"].
 	Languages []string `yaml:"languages,omitempty" json:"languages,omitempty"`
+	// PPTGenBridgeInputMode optionally overrides env PPTGEN_BRIDGE_INPUT_MODE for PPT bridge export (chunks|source|auto).
+	// Empty means use the global environment variable.
+	PPTGenBridgeInputMode string `yaml:"pptgen_bridge_input_mode,omitempty" json:"pptgen_bridge_input_mode,omitempty"`
 }
 
 // ResolveParserEngine returns the engine name for the given file type

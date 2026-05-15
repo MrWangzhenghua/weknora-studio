@@ -1,4 +1,4 @@
-"""PPTAgent Bridge FastAPI 应用入口。
+"""PPT Master Bridge FastAPI 应用入口（Python 包名 ``pptmaster_bridge``）。"""
 
 接口约定：
 - ``GET  /health``                       健康检查 / 配置探测
@@ -57,7 +57,7 @@ async def lifespan(app: FastAPI):
     await manager.start()
     app.state.manager = manager
     logger.info(
-        "PPTAgent Bridge ready: workspace=%s lm_configured=%s vlm_configured=%s",
+        "PPT Master Bridge ready: workspace=%s lm_configured=%s vlm_configured=%s",
         settings.workspace_dir,
         settings.language_model.is_configured,
         settings.vision_model.is_configured,
@@ -69,8 +69,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="PPTAgent Bridge",
-    description="WeKnora ↔ PPTAgent 桥接服务",
+    title="PPT Master Bridge",
+    description="WeKnora ↔ PPT Master（svg_to_pptx）桥接服务",
     version=__version__,
     lifespan=lifespan,
 )
@@ -121,7 +121,7 @@ async def create_task(
     if not settings.language_model.is_configured:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="PPTAgent LLM 未配置，请设置 PPTAGENT_LLM_* 环境变量",
+            detail="主语言模型未配置，请设置 PPTMASTER_LLM_BASE_URL / PPTMASTER_LLM_MODEL / PPTMASTER_LLM_API_KEY",
         )
 
     try:
@@ -356,12 +356,12 @@ async def list_tasks() -> JSONResponse:
 
 
 def run() -> None:
-    """命令行入口：``python -m pptagent_bridge`` 时调用。"""
+    """命令行入口：``python -m pptmaster_bridge`` 时调用。"""
 
     import uvicorn
 
     uvicorn.run(
-        "pptagent_bridge.app:app",
+        "pptmaster_bridge.app:app",
         host=settings.host,
         port=settings.port,
         log_level=settings.log_level.lower(),

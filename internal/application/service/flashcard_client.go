@@ -15,7 +15,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/logger"
 )
 
-// FlashcardBridgeClient 调用闪卡 Bridge（multipart 与鉴权方式对齐 PPTAgentBridgeClient）。
+// FlashcardBridgeClient 调用闪卡 Bridge（multipart 与鉴权方式对齐 PPTMasterBridgeClient）。
 type FlashcardBridgeClient struct {
 	baseURL    string
 	token      string

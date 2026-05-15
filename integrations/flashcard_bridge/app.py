@@ -20,7 +20,7 @@ _security = HTTPBearer(auto_error=False)
 
 
 def _verify_token(credentials: Optional[HTTPAuthorizationCredentials] = Depends(_security)) -> None:
-    """与 PPTAgent Bridge 一致：配置了 BRIDGE_API_TOKEN 时校验 Bearer。"""
+    """与 PPT Master Bridge 一致：配置了 BRIDGE_API_TOKEN 时校验 Bearer。"""
     expected = (settings.api_token or "").strip()
     if not expected:
         return

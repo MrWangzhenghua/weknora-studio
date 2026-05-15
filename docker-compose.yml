@@ -155,16 +155,23 @@ services:
       - WEKNORA_AGENT_LLM_TIMEOUT=${WEKNORA_AGENT_LLM_TIMEOUT:-}
       - WEKNORA_AGENT_TOOL_APPROVAL_TIMEOUT=${WEKNORA_AGENT_TOOL_APPROVAL_TIMEOUT:-}
       - APK_MIRROR_ARG=${APK_MIRROR_ARG:-}
-      # ========== PPTAgent Bridge 集成 ==========
-      # Bridge HTTP 服务地址（容器内通过服务名 pptagent 互访）
-      - PPTAGENT_BRIDGE_URL=${PPTAGENT_BRIDGE_URL:-http://pptagent:8090}
-      # Bridge Bearer Token：与 pptagent 服务的 BRIDGE_API_TOKEN 必须一致
-      - PPTAGENT_BRIDGE_TOKEN=${PPTAGENT_BRIDGE_TOKEN:-}
+      # ========== PPT Master Bridge 集成 ==========
+      # Bridge HTTP 服务地址（容器内通过服务名 pptmaster 互访）
+      - PPTMASTER_BRIDGE_URL=${PPTMASTER_BRIDGE_URL:-http://pptmaster:8090}
+      # Bridge Bearer Token：与 pptmaster 服务的 BRIDGE_API_TOKEN 必须一致
+      - PPTMASTER_BRIDGE_TOKEN=${PPTMASTER_BRIDGE_TOKEN:-}
       # WeKnora 调用 Bridge 普通请求的超时（秒）
-      - PPTAGENT_BRIDGE_TIMEOUT_SEC=${PPTAGENT_BRIDGE_TIMEOUT_SEC:-60}
-      - PPTAGENT_BRIDGE_MAX_FILE_MB=${PPTAGENT_BRIDGE_MAX_FILE_MB:-200}
+      - PPTMASTER_BRIDGE_TIMEOUT_SEC=${PPTMASTER_BRIDGE_TIMEOUT_SEC:-60}
+      - PPTMASTER_BRIDGE_MAX_FILE_MB=${PPTMASTER_BRIDGE_MAX_FILE_MB:-200}
       # 单知识点导出 Markdown 最大码点数；超出则自动降级为摘要类 chunk 再喂给 Bridge
       - PPTGEN_MARKDOWN_MAX_RUNES=${PPTGEN_MARKDOWN_MAX_RUNES:-28000}
+      # PPT：chunks|source|auto；亦可按知识库 chunking_config.pptgen_bridge_input_mode 覆盖
+      - PPTGEN_BRIDGE_INPUT_MODE=${PPTGEN_BRIDGE_INPUT_MODE:-chunks}
+      - PPTGEN_BRIDGE_SOURCE_MAX_BYTES=${PPTGEN_BRIDGE_SOURCE_MAX_BYTES:-41943040}
+      - PPTGEN_BRIDGE_SOURCE_MAX_PAGES=${PPTGEN_BRIDGE_SOURCE_MAX_PAGES:-400}
+      - PPTGEN_BRIDGE_SOURCE_MAX_MD_RUNES=${PPTGEN_BRIDGE_SOURCE_MAX_MD_RUNES:-}
+      - PPTGEN_BRIDGE_AUTO_OVERSIZED_STRATEGY=${PPTGEN_BRIDGE_AUTO_OVERSIZED_STRATEGY:-chunks}
+      - PPTGEN_BRIDGE_OUTLINE_EXCERPT_MAX_RUNES=${PPTGEN_BRIDGE_OUTLINE_EXCERPT_MAX_RUNES:-}
       # ========== 闪卡 Bridge（参考 genai-rag：主题 + 知识摘录 → LLM 闪卡）==========
       - FLASHCARD_BRIDGE_URL=${FLASHCARD_BRIDGE_URL:-http://flashcard:8091}
       - FLASHCARD_BRIDGE_TOKEN=${FLASHCARD_BRIDGE_TOKEN:-}
@@ -183,64 +190,56 @@ services:
       - "host.docker.internal:host-gateway"
 
   # ==========================================================================
-  # PPTAgent Bridge：将 icip-cas/PPTAgent 包装成 HTTP 服务，供 WeKnora 调用
-  # 默认通过 `--profile pptagent` 或 `--profile full` 启用
+  # PPT Master Bridge：内置 hugohe3/ppt-master 导出栈 + FastAPI 网关（包名 pptmaster_bridge）
+  # 启用：`docker compose --profile pptmaster up -d` 或 `--profile full`
   # ==========================================================================
-  pptagent:
-    # 注意：Docker Hub 上可能不存在 wechatopenai/weknora-pptagent，拉取会 denied；使用本地构建标签
-    image: weknora-pptagent:${WEKNORA_VERSION:-local}
+  pptmaster:
+    image: weknora-pptmaster:${WEKNORA_VERSION:-local}
     pull_policy: never
     build:
       context: .
-      dockerfile: docker/Dockerfile.pptagent
+      dockerfile: docker/Dockerfile.pptmaster
       args:
         APT_MIRROR: ${APT_MIRROR:-}
         PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
-        PPTAGENT_GIT_REPO: ${PPTAGENT_GIT_REPO:-https://github.com/icip-cas/PPTAgent.git}
-        PPTAGENT_GIT_REF: ${PPTAGENT_GIT_REF:-main}
-    container_name: WeKnora-pptagent
+        PPTMASTER_GIT_REPO: ${PPTMASTER_GIT_REPO:-https://github.com/hugohe3/ppt-master.git}
+        PPTMASTER_GIT_REF: ${PPTMASTER_GIT_REF:-main}
+    container_name: WeKnora-pptmaster
     profiles:
-      - pptagent
+      - pptmaster
       - full
     ports:
-      - "${PPTAGENT_BRIDGE_PORT:-8090}:8090"
+      - "${PPTMASTER_BRIDGE_PORT:-8090}:8090"
     environment:
       # ===== Bridge 自身 =====
       - BRIDGE_HOST=0.0.0.0
       - BRIDGE_PORT=8090
-      - BRIDGE_WORKSPACE=/data/pptagent
-      - BRIDGE_LOG_LEVEL=${PPTAGENT_LOG_LEVEL:-INFO}
-      - BRIDGE_API_TOKEN=${PPTAGENT_BRIDGE_TOKEN:-}
-      - BRIDGE_TASK_TIMEOUT=${PPTAGENT_TASK_TIMEOUT:-1800}
-      - BRIDGE_TASK_TTL_HOURS=${PPTAGENT_TASK_TTL_HOURS:-24}
-      - BRIDGE_MAX_CONCURRENCY=${PPTAGENT_MAX_CONCURRENCY:-1}
-      - BRIDGE_MAX_FILE_MB=${PPTAGENT_BRIDGE_MAX_FILE_MB:-200}
-      # ===== PPTAgent 主语言模型（必填）=====
-      - PPTAGENT_LLM_BASE_URL=${PPTAGENT_LLM_BASE_URL:-}
-      - PPTAGENT_LLM_MODEL=${PPTAGENT_LLM_MODEL:-}
-      - PPTAGENT_LLM_API_KEY=${PPTAGENT_LLM_API_KEY:-}
-      - PPTAGENT_LLM_TIMEOUT=${PPTAGENT_LLM_TIMEOUT:-600}
-      # 控制单次补全输出上限与合并 Markdown 长度，减轻 JSON 被截断、上下文过长问题
-      - PPTAGENT_LLM_MAX_OUTPUT_TOKENS=${PPTAGENT_LLM_MAX_OUTPUT_TOKENS:-65536}
-      - PPTAGENT_VLM_MAX_OUTPUT_TOKENS=${PPTAGENT_VLM_MAX_OUTPUT_TOKENS:-0}
-      - PPTAGENT_MARKDOWN_MAX_CHARS=${PPTAGENT_MARKDOWN_MAX_CHARS:-28000}
-      # ===== PPTAgent 视觉模型（可选）=====
-      - PPTAGENT_VLM_BASE_URL=${PPTAGENT_VLM_BASE_URL:-}
-      - PPTAGENT_VLM_MODEL=${PPTAGENT_VLM_MODEL:-}
-      - PPTAGENT_VLM_API_KEY=${PPTAGENT_VLM_API_KEY:-}
-      - PPTAGENT_VLM_TIMEOUT=${PPTAGENT_VLM_TIMEOUT:-600}
-      - PPTAGENT_DEFAULT_TEMPLATE=${PPTAGENT_DEFAULT_TEMPLATE:-default}
+      - BRIDGE_WORKSPACE=/data/pptmaster
+      - BRIDGE_LOG_LEVEL=${PPTMASTER_LOG_LEVEL:-INFO}
+      - BRIDGE_API_TOKEN=${PPTMASTER_BRIDGE_TOKEN:-}
+      - BRIDGE_TASK_TIMEOUT=${PPTMASTER_TASK_TIMEOUT:-1800}
+      - BRIDGE_TASK_TTL_HOURS=${PPTMASTER_TASK_TTL_HOURS:-24}
+      - BRIDGE_MAX_CONCURRENCY=${PPTMASTER_MAX_CONCURRENCY:-1}
+      - BRIDGE_MAX_FILE_MB=${PPTMASTER_BRIDGE_MAX_FILE_MB:-200}
+      - PPTMASTER_REPO_ROOT=/opt/ppt-master
+      # ===== 主语言模型（OpenAI 兼容）=====
+      - PPTMASTER_LLM_BASE_URL=${PPTMASTER_LLM_BASE_URL:-}
+      - PPTMASTER_LLM_MODEL=${PPTMASTER_LLM_MODEL:-}
+      - PPTMASTER_LLM_API_KEY=${PPTMASTER_LLM_API_KEY:-}
+      - PPTMASTER_LLM_TIMEOUT=${PPTMASTER_LLM_TIMEOUT:-600}
+      - PPTMASTER_LLM_MAX_OUTPUT_TOKENS=${PPTMASTER_LLM_MAX_OUTPUT_TOKENS:-65536}
+      - PPTMASTER_VLM_MAX_OUTPUT_TOKENS=${PPTMASTER_VLM_MAX_OUTPUT_TOKENS:-0}
+      - PPTMASTER_MARKDOWN_MAX_CHARS=${PPTMASTER_MARKDOWN_MAX_CHARS:-28000}
+      # ===== 视觉模型（可选；当前 Bridge 未使用）=====
+      - PPTMASTER_VLM_BASE_URL=${PPTMASTER_VLM_BASE_URL:-}
+      - PPTMASTER_VLM_MODEL=${PPTMASTER_VLM_MODEL:-}
+      - PPTMASTER_VLM_API_KEY=${PPTMASTER_VLM_API_KEY:-}
+      - PPTMASTER_VLM_TIMEOUT=${PPTMASTER_VLM_TIMEOUT:-600}
+      - PPTMASTER_DEFAULT_TEMPLATE=${PPTMASTER_DEFAULT_TEMPLATE:-default}
       - TZ=${TZ:-Asia/Shanghai}
-      # Hugging Face Hub：模型/语言识别等资源缓存（见 docs/PPTAgent-HF缓存与加速.md）
-      - HF_HOME=/data/huggingface
-      - HF_TOKEN=${HF_TOKEN:-}
     volumes:
-      # Bridge workspace：保存任务工作目录与最终生成的 .pptx 文件
-      - pptagent-data:/data/pptagent
-      # HF 缓存持久化：避免每次重建容器都重新下载 fasttext-language-id 等文件
-      - pptagent-hf-cache:/data/huggingface
-      # 挂载 bridge 便于热改网关代码；勿挂载空的 ./integrations/PPTAgent，否则会覆盖镜像内已安装的 PPTAgent
-      - ./integrations/pptagent_bridge:/opt/pptagent_bridge
+      - pptmaster-data:/data/pptmaster
+      - ./integrations/pptmaster_bridge:/opt/pptmaster_bridge
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:8090/health || exit 1"]
       interval: 30s
@@ -867,7 +866,5 @@ volumes:
   langfuse_clickhouse_logs:
   langfuse_minio_data:
   searxng_config:
-  # PPTAgent Bridge 工作区：保存任务工作目录与最终 PPT 文件
-  pptagent-data:
-  # PPTAgent 依赖的 Hugging Face Hub 本地缓存（如语言识别 lid.176.bin）
-  pptagent-hf-cache:
+  # PPT Master Bridge 工作区：保存任务工作目录与最终 PPT 文件
+  pptmaster-data:

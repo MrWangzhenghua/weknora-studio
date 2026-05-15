@@ -4,11 +4,11 @@ package types
 import "time"
 
 // PPTGenTask 表示一次"从知识库生成 PPT"的任务。
-// 任务由 WeKnora 后端创建并跟踪，实际的 PPT 生成委托给 PPTAgent Bridge 完成。
+// 任务由 WeKnora 后端创建并跟踪，实际的 PPT 生成委托给 PPT Bridge（ppt-master 导出栈）完成。
 type PPTGenTask struct {
 	// TaskID 是 WeKnora 端的本地任务 ID，使用 UUID。
 	TaskID string `json:"task_id"`
-	// BridgeTaskID 是 PPTAgent Bridge 返回的远端任务 ID。
+	// BridgeTaskID 是 Bridge 返回的远端任务 ID。
 	BridgeTaskID string `json:"bridge_task_id"`
 	// KnowledgeBaseID 关联的知识库。
 	KnowledgeBaseID string `json:"knowledge_base_id"`
@@ -22,7 +22,7 @@ type PPTGenTask struct {
 	Instruction string `json:"instruction"`
 	// NumPages 期望幻灯片张数（0 表示由 LLM 自动决定）。
 	NumPages int `json:"num_pages"`
-	// Template 模板名（空字符串 = 使用 Bridge 默认）。
+	// Template 历史字段；当前 PPT Master Bridge 路径下可忽略。
 	Template string `json:"template"`
 
 	// Status 任务状态（与 Bridge 同步刷新）。
@@ -71,7 +71,7 @@ type PPTGenCreateRequest struct {
 	Title string `json:"title"`
 	// IncludeFileIDs 仅包含指定知识 ID（可选，空数组表示包含全部）。
 	IncludeFileIDs []string `json:"include_file_ids"`
-	// LLMModelID 全局设置中的对话模型 ID（可选）；若填写则本任务使用该模型的 base_url/api_key，不再使用容器环境变量中的 PPTAGENT_LLM_*。
+	// LLMModelID 全局设置中的对话模型 ID（可选）；若填写则本任务使用该模型的 base_url/api_key，不再使用容器环境变量中的 PPTMASTER_LLM_*。
 	LLMModelID string `json:"llm_model_id,omitempty"`
 	// VLMModelID 全局设置中的视觉模型 ID（可选）；不填则沿用 Bridge 默认 VLM 或未配置时回退到 LLM。
 	VLMModelID string `json:"vlm_model_id,omitempty"`

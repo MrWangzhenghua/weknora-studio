@@ -2625,7 +2625,7 @@ async function createNewSession(value: string): Promise<void> {
     @success="handleKBEditorSuccess"
   />
 
-  <!-- PPT 生成对话框：基于知识库内容调用 PPTAgent 生成 PPT -->
+  <!-- PPT 生成对话框：基于知识库内容经 PPT Master Bridge 生成 PPT -->
   <PPTGenerateDialog
     v-model:visible="pptGenDialogVisible"
     :kb-id="kbId"

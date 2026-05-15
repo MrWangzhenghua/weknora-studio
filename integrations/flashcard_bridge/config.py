@@ -1,4 +1,4 @@
-"""Bridge 配置：从环境变量读取，与 PPTAgent Bridge 风格对齐。"""
+"""Bridge 配置：从环境变量读取，与 PPT Master Bridge 风格对齐。"""
 
 from __future__ import annotations
 
