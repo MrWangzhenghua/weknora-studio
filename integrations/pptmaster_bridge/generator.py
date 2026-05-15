@@ -70,6 +70,37 @@ def _ascii_keywords_for_stock_search(text: str, max_words: int = 8) -> str:
     return out[:120] if out else ""
 
 
+def _req_extra(req: dict[str, Any]) -> dict[str, Any]:
+    ex = req.get("extra")
+    return ex if isinstance(ex, dict) else {}
+
+
+def _normalize_image_hints(raw: Any, max_n: int = 14) -> list[str]:
+    if raw is None:
+        return []
+    items: list[Any]
+    if isinstance(raw, list):
+        items = raw
+    elif isinstance(raw, str) and raw.strip():
+        items = [raw]
+    else:
+        return []
+    out: list[str] = []
+    for x in items:
+        s = str(x).strip()
+        if not s:
+            continue
+        s = re.sub(r"[\n\r\t]+", " ", s)
+        if len(s) > 120:
+            s = s[:120]
+        if not re.search(r"[A-Za-z]", s):
+            continue
+        out.append(s)
+        if len(out) >= max_n:
+            break
+    return out
+
+
 def sanitize_image_query_for_openverse(raw: str, slide_title: str = "") -> str:
     """清洗模型输出的 image_query：去换行与引号，优先提取英文关键词，降低搜图失败率。"""
     s = (raw or "").strip()
@@ -161,7 +192,7 @@ class PPTGenerator:
                     logger.warning("copy image asset failed: %s", f)
 
         combined = await self._to_combined_markdown(ctx, input_files, markdown_dir)
-        await ctx.progress_cb(TaskStatus.DRAFTING, 25, "已整理正文，正在生成演示结构")
+        await ctx.progress_cb(TaskStatus.DRAFTING, 22, "已整理正文，正在提炼演示主题与英文配图关键词")
 
         req = record.request or {}
         endpoint = _resolve_llm_endpoint(self.settings, req, role="llm")
@@ -171,7 +202,29 @@ class PPTGenerator:
                 "（沿用原环境变量名，无需改 WeKnora 配置）"
             )
 
-        title = (req.get("title") or "知识库演示").strip()
+        raw_title = (req.get("title") or "").strip()
+        extra = _req_extra(req)
+        kb_name = str(extra.get("weknora_kb_name") or "").strip()
+
+        deck_title, stock_hints = await self._llm_infer_deck_meta(ctx, endpoint, combined, req)
+        inferred = (deck_title or "").strip()
+        if inferred and (
+            (not raw_title)
+            or raw_title == kb_name
+            or raw_title == "WeKnora-Presentation"
+        ):
+            title = inferred
+        elif raw_title:
+            title = raw_title
+        else:
+            title = inferred or "知识库演示"
+
+        if stock_hints:
+            req["_ppt_stock_photo_hints"] = stock_hints
+
+        if inferred and title != raw_title:
+            logger.info("ppt deck title: inferred %r (bridge request title was %r)", title, raw_title)
+
         num_pages = req.get("num_pages")
         try:
             num_pages_i = int(num_pages) if num_pages is not None else 0
@@ -180,6 +233,7 @@ class PPTGenerator:
         instruction = (req.get("instruction") or "").strip()
         language = (req.get("language") or "").strip()
 
+        await ctx.progress_cb(TaskStatus.DRAFTING, 28, "正在生成演示结构（大纲）")
         outline = await self._llm_outline(
             ctx,
             endpoint,
@@ -188,13 +242,14 @@ class PPTGenerator:
             target_pages=num_pages_i,
             instruction=instruction,
             language=language,
+            stock_photo_hints=stock_hints,
         )
         slides = outline.get("slides") or []
         if not isinstance(slides, list) or len(slides) < 1:
             raise RuntimeError("模型返回的大纲无效（slides 为空）")
 
         await ctx.progress_cb(TaskStatus.DRAFTING, 40, "检索配图（可选）")
-        await self._fetch_slide_images(slides, images_dir)
+        await self._fetch_slide_images(slides, images_dir, req)
 
         await ctx.progress_cb(TaskStatus.RENDERING, 45, "逐页生成 SVG")
         svg_paths: list[Path] = []
@@ -368,6 +423,66 @@ class PPTGenerator:
             logger.exception("markdown conversion error: %s", file_path)
             return "", True
 
+    async def _llm_infer_deck_meta(
+        self,
+        ctx: GeneratorContext,
+        endpoint: LLMEndpoint,
+        combined: str,
+        req: dict[str, Any],
+    ) -> tuple[str, list[str]]:
+        """根据正文与 WeKnora 知识库摘要，推断演示主标题与英文 stock 配图关键词。"""
+        del ctx  # 预留进度回调等扩展
+        try:
+            extra = _req_extra(req)
+            kb_desc = str(extra.get("weknora_kb_description") or "").strip()
+            kb_name = str(extra.get("weknora_kb_name") or "").strip()
+            instruction = (req.get("instruction") or "").strip()
+            body = (combined or "").strip()
+            if len(body) < 60 and len(kb_desc) < 20:
+                return "", []
+
+            max_body = 20000
+            body_excerpt = body[:max_body]
+            blocks: list[str] = []
+            if kb_name:
+                blocks.append(
+                    "【知识库名称】（多为标识符，不是演示主题；不要把它当作 deck_title）。\n" + kb_name
+                )
+            if kb_desc:
+                blocks.append("【知识库说明 / 摘要】\n" + kb_desc[:8000])
+            if instruction:
+                blocks.append("【用户附加说明】\n" + instruction[:4000])
+            blocks.append("【正文摘录】\n-----\n" + body_excerpt + "\n-----")
+            user = "\n\n".join(blocks)
+            sys_msg = (
+                "你是演示策划与配图检索助手。只输出一个 JSON 对象，不要 Markdown 代码围栏。\n"
+                "必填字段：\n"
+                "1) deck_title: 字符串。根据「知识库说明」与「正文摘录」提炼整条演示的主标题。"
+                "语言与正文主体一致（中文正文则输出中文标题）。简洁有力，约 8～32 字。"
+                "必须反映核心主题；不要直接沿用【知识库名称】作为标题（尤其当名称为 test、"
+                "MyKB、我的知识库等占位名时）。\n"
+                "2) image_search_hints: 字符串数组，8～14 条。每条仅含英文，2～6 个单词，"
+                "用于在免版权图库搜索摄影或插图类素材；描写可拍摄场景或物体，"
+                "如 diabetes prevention campaign、clinical trial participants、glp1 obesity treatment。"
+                "须与素材科学或业务主题强相关；条目之间尽量具体且不重复；禁止中文、禁止整句说明。\n"
+                "若正文信息极少，hints 至少 4 条；deck_title 仍须概括可见主题。"
+            )
+            raw = await _chat_text(
+                endpoint,
+                self.settings,
+                [{"role": "system", "content": sys_msg}, {"role": "user", "content": user}],
+                json_mode=True,
+            )
+            data = _parse_json_object(raw)
+            if not isinstance(data, dict):
+                return "", []
+            deck_title = str(data.get("deck_title") or "").strip()
+            hints = _normalize_image_hints(data.get("image_search_hints"))
+            return deck_title, hints
+        except Exception:
+            logger.exception("LLM infer deck_title / image_search_hints failed")
+            return "", []
+
     async def _llm_outline(
         self,
         ctx: GeneratorContext,
@@ -378,7 +493,9 @@ class PPTGenerator:
         target_pages: int,
         instruction: str,
         language: str,
+        stock_photo_hints: Optional[List[str]] = None,
     ) -> dict[str, Any]:
+        del ctx
         hint_pages = target_pages if 3 <= target_pages <= 40 else 12
         user_extra = ""
         if instruction:
@@ -403,6 +520,15 @@ class PPTGenerator:
             "医学主题用泛化英文词如 diabetes care、medical research lab；若无合适英文检索词则置空字符串 \"\" 。"
             "内容语言与素材一致。封面含标题与副标题要点；整体信息层次清晰，便于后续设计高质量版式。"
         )
+        if stock_photo_hints:
+            joined = " | ".join(str(h).strip() for h in stock_photo_hints[:14] if str(h).strip())
+            if joined:
+                sys_msg += (
+                    "\n以下为从摘要与正文归纳的英文配图主题词（供 Openverse 搜图），"
+                    "各页 image_query 应从中选取、组合或轻微改写为 2～8 个英文词，"
+                    "并尽量让不同页面使用不同词组，避免整份演示重复同一检索词：\n"
+                    + joined
+                )
         raw = await _chat_text(
             endpoint,
             self.settings,
@@ -414,7 +540,12 @@ class PPTGenerator:
             raise RuntimeError("大纲 JSON 解析失败")
         return data
 
-    async def _fetch_slide_images(self, slides: list[Any], images_dir: Path) -> None:
+    async def _fetch_slide_images(
+        self,
+        slides: list[Any],
+        images_dir: Path,
+        req: Optional[dict[str, Any]] = None,
+    ) -> None:
         script = _scripts_dir() / "image_search.py"
         if not script.is_file():
             return
@@ -423,12 +554,18 @@ class PPTGenerator:
         sub_timeout = max(30, int(self.settings.image_search_subprocess_timeout))
         fb = (self.settings.image_search_query_fallback_en or "").strip()[:120]
 
-        for slide in slides:
+        hints_raw = (req or {}).get("_ppt_stock_photo_hints")
+        hints = _normalize_image_hints(hints_raw, max_n=20) if hints_raw else []
+
+        for i, slide in enumerate(slides):
             if not isinstance(slide, dict):
                 continue
             raw_s = str(slide.get("image_query") or "").strip()
-            title = str(slide.get("title") or "")
-            cleaned = sanitize_image_query_for_openverse(raw_s, title)
+            st = str(slide.get("title") or "")
+            cleaned = sanitize_image_query_for_openverse(raw_s, st)
+            if not cleaned and hints:
+                hi = hints[i % len(hints)]
+                cleaned = sanitize_image_query_for_openverse(hi, st)
             if cleaned:
                 slide["image_query"] = cleaned
             elif raw_s and fb:

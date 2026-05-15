@@ -84,7 +84,10 @@ class GenerateRequestMetadata(BaseModel):
     template: Optional[str] = Field(
         None, description="历史字段；PPT Master 路径下不使用固定 .pptx 模板"
     )
-    title: Optional[str] = Field(None, description="知识库名 / 演示主题，用作 PPT 标题")
+    title: Optional[str] = Field(
+        None,
+        description="演示标题；若与知识库同名或为占位名，Bridge 会用正文与摘要由模型改写为主标题",
+    )
     # 透传字段，便于 WeKnora 关联任务上下文。
     weknora_tenant_id: Optional[int] = Field(None, description="租户 ID")
     weknora_kb_id: Optional[str] = Field(None, description="知识库 ID")

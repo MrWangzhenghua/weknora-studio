@@ -104,9 +104,10 @@ func (s *PPTGenService) CreateTask(
 		WeKnoraKBID:     kbID,
 		WeKnoraUserID:   userID,
 		Extra: map[string]interface{}{
-			"weknora_kb_name":     kb.Name,
-			"weknora_total_files": len(included),
-			"weknora_total_bytes": totalBytes,
+			"weknora_kb_name":           kb.Name,
+			"weknora_kb_description":    strings.TrimSpace(kb.Description),
+			"weknora_total_files":       len(included),
+			"weknora_total_bytes":       totalBytes,
 			"weknora_bridge_input_mode": bridgeMode,
 		},
 	}
