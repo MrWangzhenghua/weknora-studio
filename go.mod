@@ -30,20 +30,20 @@ require (
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/joho/godotenv v1.5.1
 	github.com/ks3sdklib/aws-sdk-go v1.11.0
-	github.com/larksuite/oapi-sdk-go/v3 v3.6.1
+	github.com/larksuite/oapi-sdk-go/v3 v3.7.5
 	github.com/longbridgeapp/opencc v0.3.13
-	github.com/mark3labs/mcp-go v0.52.0
+	github.com/mark3labs/mcp-go v0.54.0
 	github.com/milvus-io/milvus/client/v2 v2.6.4
 	github.com/minio/minio-go/v7 v7.1.0
 	github.com/neo4j/neo4j-go-driver/v6 v6.0.0
-	github.com/ollama/ollama v0.23.2
+	github.com/ollama/ollama v0.24.0
 	github.com/open-dingtalk/dingtalk-stream-sdk-go v0.9.1
 	github.com/panjf2000/ants/v2 v2.12.0
 	github.com/parquet-go/parquet-go v0.29.0
 	github.com/pganalyze/pg_query_go/v6 v6.2.2
 	github.com/pgvector/pgvector-go v0.3.0
 	github.com/qdrant/go-client v1.18.1
-	github.com/redis/go-redis/v9 v9.14.1
+	github.com/redis/go-redis/v9 v9.19.0
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/sashabaranov/go-openai v1.41.2
 	github.com/sirupsen/logrus v1.9.4
@@ -58,7 +58,7 @@ require (
 	github.com/tiktoken-go/tokenizer v0.7.0
 	github.com/volcengine/ve-tos-golang-sdk/v2 v2.9.4
 	github.com/wailsapp/wails/v2 v2.12.0
-	github.com/weaviate/weaviate v1.37.3
+	github.com/weaviate/weaviate v1.37.4
 	github.com/weaviate/weaviate-go-client/v5 v5.7.3
 	github.com/xuri/excelize/v2 v2.10.1
 	github.com/yanyiwu/gojieba v1.4.7
@@ -74,8 +74,8 @@ require (
 	golang.org/x/net v0.54.0
 	golang.org/x/sync v0.20.0
 	golang.org/x/time v0.15.0
-	google.golang.org/api v0.278.0
-	google.golang.org/grpc v1.81.0
+	google.golang.org/api v0.279.0
+	google.golang.org/grpc v1.81.1
 	google.golang.org/protobuf v1.36.11
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	gopkg.in/yaml.v3 v3.0.1
@@ -132,7 +132,6 @@ require (
 	github.com/coreos/go-semver v0.3.0 // indirect
 	github.com/coreos/go-systemd/v22 v22.3.2 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
-	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/dlclark/regexp2 v1.11.5 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/duckdb/duckdb-go-bindings v0.10502.0 // indirect
