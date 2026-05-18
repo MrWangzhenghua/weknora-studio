@@ -999,8 +999,10 @@ async def _chat_text(
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
     if cap > 0:
-        if maas:
+        # 华为 ModelArts MaaS 禁止同时传 max_tokens 与 max_completion_tokens
+        if maas and "modelarts-maas.com" in (endpoint.base_url or "").lower():
             payload["max_tokens"] = cap
+        elif maas:
             payload["max_completion_tokens"] = cap
         else:
             payload["max_completion_tokens"] = cap

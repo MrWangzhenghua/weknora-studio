@@ -196,8 +196,12 @@ async def generate_flashcards_from_context(
         cap = settings.llm_max_output_tokens
         if _is_maas_openai_base(base):
             cap = max(cap, 8192)
-        payload["max_tokens"] = cap
-        if _is_maas_openai_base(base):
+        low_base = base.lower()
+        if "modelarts-maas.com" in low_base:
+            payload["max_tokens"] = cap
+        elif _is_maas_openai_base(base):
+            payload["max_completion_tokens"] = cap
+        else:
             payload["max_completion_tokens"] = cap
 
     if _is_maas_openai_base(base):
