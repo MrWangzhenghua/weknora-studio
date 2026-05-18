@@ -209,11 +209,22 @@ func RegisterFlashcardGenRoutes(r *gin.RouterGroup, h *handler.FlashcardGenHandl
 	if h == nil {
 		return
 	}
-	kb := r.Group("/knowledge-bases/:id/flashcards")
+	kb := r.Group("/knowledge-bases/:id/flashcard-tasks")
 	{
-		kb.POST("/generate", h.GenerateFlashcards)
+		kb.POST("", h.CreateFlashcardGenTask)
+		kb.GET("", h.ListFlashcardGenTasks)
 	}
-	r.GET("/flashcards/health", h.FlashcardHealth)
+	// 兼容旧版同步接口
+	legacy := r.Group("/knowledge-bases/:id/flashcards")
+	{
+		legacy.POST("/generate", h.GenerateFlashcards)
+	}
+	tasks := r.Group("/flashcard-tasks")
+	{
+		tasks.GET("/health", h.FlashcardHealth)
+		tasks.DELETE("/:task_id/permanent", h.PurgeFlashcardGenTask)
+		tasks.GET("/:task_id", h.GetFlashcardGenTask)
+	}
 }
 
 // RegisterChunkRoutes 注册分块相关的路由
