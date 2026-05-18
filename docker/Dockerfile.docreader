@@ -33,24 +33,26 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 ARG TARGETARCH
 COPY packages/ /app/packages/
 RUN ls -lah /app/packages/
-# 兼容 BuildKit 和传统构建：如果 TARGETARCH 为空，使用 uname 检测
-RUN if [ -z "$TARGETARCH" ]; then \
-        case $(uname -m) in \
-            "x86_64") TARGETARCH="amd64" ;; \
-            "aarch64") TARGETARCH="arm64" ;; \
-            "armv7l") TARGETARCH="arm" ;; \
-            *) echo "Unsupported architecture: $(uname -m)" && exit 1 ;; \
+# 兼容 BuildKit 和传统构建：使用 DETECT_ARCH 避免与 ARG TARGETARCH 预替换冲突
+RUN set -eu; \
+    DETECT_ARCH="${TARGETARCH:-}"; \
+    if [ -z "$DETECT_ARCH" ]; then \
+        case "$(uname -m)" in \
+            x86_64) DETECT_ARCH=amd64 ;; \
+            aarch64) DETECT_ARCH=arm64 ;; \
+            armv7l|armv6l) DETECT_ARCH=arm ;; \
+            *) echo "Unsupported architecture: $(uname -m)" >&2; exit 1 ;; \
         esac; \
-        echo "[自动检测] 架构: $TARGETARCH"; \
+        echo "[自动检测] 架构: ${DETECT_ARCH}"; \
     else \
-        echo "[BuildKit] 架构: $TARGETARCH"; \
-    fi && \
-    case $TARGETARCH in \
-        "amd64") PROTOC_ARCH="x86_64" ;; \
-        "arm64") PROTOC_ARCH="aarch_64" ;; \
-        "arm") PROTOC_ARCH="arm" ;; \
-        *) echo "Unsupported architecture for protoc: $TARGETARCH" && exit 1 ;; \
-    esac && \
+        echo "[BuildKit] 架构: ${DETECT_ARCH}"; \
+    fi; \
+    case "${DETECT_ARCH}" in \
+        amd64) PROTOC_ARCH=x86_64 ;; \
+        arm64) PROTOC_ARCH=aarch_64 ;; \
+        arm) PROTOC_ARCH=arm ;; \
+        *) echo "Unsupported architecture for protoc: ${DETECT_ARCH}" >&2; exit 1 ;; \
+    esac; \
     PROTOC_PACKAGE="protoc-3.19.4-linux-${PROTOC_ARCH}.zip" && \
     if [ -f "/app/packages/${PROTOC_PACKAGE}" ]; then \
         echo "发现本地protoc安装包，将进行离线安装"; \
@@ -114,31 +116,47 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     libsm6 \
     libreoffice \
     curl \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# 安装 grpc_health_probe
+# 安装 grpc_health_probe（支持 packages/ 离线包；在线用 curl 重试，避免 wget -q 静默失败）
 ARG TARGETARCH
-# 兼容 BuildKit 和传统构建：如果 TARGETARCH 为空，使用 uname 检测
-RUN if [ -z "$TARGETARCH" ]; then \
-        case $(uname -m) in \
-            "x86_64") TARGETARCH="amd64" ;; \
-            "aarch64") TARGETARCH="arm64" ;; \
-            "armv7l") TARGETARCH="arm" ;; \
-            *) echo "Unsupported architecture: $(uname -m)" && exit 1 ;; \
+ARG GRPC_HEALTH_PROBE_VERSION=v0.4.24
+COPY packages/ /tmp/packages/
+RUN set -eu; \
+    DETECT_ARCH="${TARGETARCH:-}"; \
+    if [ -z "$DETECT_ARCH" ]; then \
+        case "$(uname -m)" in \
+            x86_64) DETECT_ARCH=amd64 ;; \
+            aarch64) DETECT_ARCH=arm64 ;; \
+            armv7l|armv6l) DETECT_ARCH=arm ;; \
+            *) echo "Unsupported architecture: $(uname -m)" >&2; exit 1 ;; \
         esac; \
-        echo "[自动检测] 架构: $TARGETARCH"; \
+        echo "[自动检测] 架构: ${DETECT_ARCH}"; \
     else \
-        echo "[BuildKit] 架构: $TARGETARCH"; \
-    fi && \
-    GRPC_HEALTH_PROBE_VERSION=v0.4.24 && \
-    case $TARGETARCH in \
-        "amd64") ARCH="amd64" ;; \
-        "arm64") ARCH="arm64" ;; \
-        "arm") ARCH="arm" ;; \
-        *) echo "Unsupported architecture: $TARGETARCH" && exit 1 ;; \
-    esac && \
-    wget -qO/bin/grpc_health_probe https://github.com/grpc-ecosystem/grpc-health-probe/releases/download/${GRPC_HEALTH_PROBE_VERSION}/grpc_health_probe-linux-${ARCH} && \
-    chmod +x /bin/grpc_health_probe
+        echo "[BuildKit] 架构: ${DETECT_ARCH}"; \
+    fi; \
+    case "${DETECT_ARCH}" in \
+        amd64) PROBE_ARCH=amd64 ;; \
+        arm64) PROBE_ARCH=arm64 ;; \
+        arm) PROBE_ARCH=arm ;; \
+        *) echo "Unsupported architecture: ${DETECT_ARCH}" >&2; exit 1 ;; \
+    esac; \
+    PROBE_BIN="grpc_health_probe-linux-${PROBE_ARCH}"; \
+    if [ -f "/tmp/packages/${PROBE_BIN}" ]; then \
+        echo "[离线] 使用 packages/${PROBE_BIN}"; \
+        install -m 0755 "/tmp/packages/${PROBE_BIN}" /bin/grpc_health_probe; \
+    else \
+        URL="https://github.com/grpc-ecosystem/grpc-health-probe/releases/download/${GRPC_HEALTH_PROBE_VERSION}/${PROBE_BIN}"; \
+        echo "[在线] 下载 ${URL}"; \
+        curl -fSL --retry 5 --retry-delay 3 --connect-timeout 30 -o /bin/grpc_health_probe "${URL}" || { \
+            echo "grpc_health_probe 下载失败（常见于 GitHub 不可达）。" >&2; \
+            echo "请将 ${PROBE_BIN} 放入仓库 packages/ 后重新构建，或配置构建代理。" >&2; \
+            exit 1; \
+        }; \
+        chmod +x /bin/grpc_health_probe; \
+    fi; \
+    rm -rf /tmp/packages
 
 # 从构建阶段复制已安装的依赖和生成的代码
 ENV VIRTUAL_ENV=/app/.venv
