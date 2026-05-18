@@ -189,8 +189,7 @@ func (s *FlashcardGenService) runGeneration(
 		return nil, nil, errors.NewBadRequestError("请填写闪卡主题（topic）")
 	}
 
-	kb, err := s.kbSvc.GetKnowledgeBaseByID(ctx, kbID)
-	if err != nil {
+	if _, err := s.kbSvc.GetKnowledgeBaseByID(ctx, kbID); err != nil {
 		return nil, nil, errors.NewNotFoundError("知识库不存在").WithDetails(err.Error())
 	}
 	tenantID, _ := ctx.Value(types.TenantIDContextKey).(uint64)
