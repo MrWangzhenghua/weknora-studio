@@ -529,15 +529,34 @@ class PPTGenerator:
                     "并尽量让不同页面使用不同词组，避免整份演示重复同一检索词：\n"
                     + joined
                 )
-        raw = await _chat_text(
-            endpoint,
-            self.settings,
-            [{"role": "system", "content": sys_msg}, {"role": "user", "content": user}],
-            json_mode=True,
-        )
+        messages = [{"role": "system", "content": sys_msg}, {"role": "user", "content": user}]
+        raw = await _chat_text(endpoint, self.settings, messages, json_mode=True)
         data = _parse_json_object(raw)
-        if not isinstance(data, dict):
-            raise RuntimeError("大纲 JSON 解析失败")
+        if not isinstance(data, dict) or not _outline_has_slides(data):
+            logger.warning(
+                "outline JSON parse failed (attempt 1), snippet=%s",
+                _json_debug_snippet(raw),
+            )
+            retry_sys = (
+                sys_msg
+                + "\n上次输出无法解析。请严格只输出一个合法 JSON 对象："
+                "双引号、无注释、无尾逗号、无 Markdown 围栏；"
+                "必须包含 theme 与 slides 字段。"
+            )
+            raw = await _chat_text(
+                endpoint,
+                self.settings,
+                [{"role": "system", "content": retry_sys}, {"role": "user", "content": user}],
+                json_mode=True,
+            )
+            data = _parse_json_object(raw)
+        data = _normalize_outline_dict(data)
+        if not isinstance(data, dict) or not _outline_has_slides(data):
+            logger.error(
+                "outline JSON parse failed (attempt 2), snippet=%s",
+                _json_debug_snippet(raw),
+            )
+            raise RuntimeError("大纲 JSON 解析失败（模型返回非合法 JSON 或缺少 slides）")
         return data
 
     async def _fetch_slide_images(
@@ -711,25 +730,166 @@ def _slide_stem(idx: int, slide: dict[str, Any]) -> str:
     return f"{n:02d}_{slug}"
 
 
-def _parse_json_object(text: str) -> Any:
-    text = text.strip()
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        pass
-    m = re.search(r"\{[\s\S]*\}\s*$", text)
-    if m:
-        try:
-            return json.loads(m.group(0))
-        except json.JSONDecodeError:
-            pass
+def _json_debug_snippet(text: str, limit: int = 500) -> str:
+    t = (text or "").replace("\n", "\\n")
+    return t[:limit] + ("…" if len(t) > limit else "")
+
+
+def _strip_llm_response_artifacts(text: str) -> str:
+    """去掉 MaaS/推理模型常见包裹，避免污染 JSON。"""
+    t = (text or "").strip()
+    if not t:
+        return ""
+    _to = "<" + "think" + ">"
+    _tc = "<" + "/" + "think" + ">"
+    t = re.sub(re.escape(_to) + r".*?" + re.escape(_tc), "", t, flags=re.I | re.S)
+    t = re.sub(r"(?is)<thinking>.*?</thinking>", "", t)
+    return t.strip()
+
+
+def _repair_json_text(s: str) -> str:
+    """修复 LLM 常见 JSON 瑕疵：尾逗号、括号不平衡等。"""
+    s = _strip_llm_response_artifacts(s.strip())
+    if not s:
+        return "{}"
+    if s[0] != "{" and s[0] != "[":
+        if ":" in s:
+            s = "{" + s + "}"
+        else:
+            return s
+    # 去掉 ,] 与 ,}
+    prev = None
+    while prev != s:
+        prev = s
+        s = re.sub(r",(\s*[\]}])", r"\1", s)
+    # 平衡括号
+    stack: list[str] = []
+    in_str = False
+    esc = False
+    for ch in s:
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+            continue
+        if ch in "{[":
+            stack.append("}" if ch == "{" else "]")
+        elif ch in "}]" and stack and stack[-1] == ch:
+            stack.pop()
+    s = s + "".join(reversed(stack))
+    return s
+
+
+def _extract_json_candidate(text: str) -> list[str]:
+    """从模型输出中收集若干 JSON 候选串（按优先级）。"""
+    text = _strip_llm_response_artifacts(text)
+    if not text:
+        return []
+    candidates: list[str] = [text]
     fence = re.search(r"```(?:json)?\s*([\s\S]*?)```", text, re.I)
     if fence:
-        try:
-            return json.loads(fence.group(1).strip())
-        except json.JSONDecodeError:
-            pass
+        candidates.insert(0, fence.group(1).strip())
+    # 最大外层 { ... }（括号平衡）
+    start = text.find("{")
+    if start >= 0:
+        depth = 0
+        in_str = False
+        esc = False
+        for i in range(start, len(text)):
+            ch = text[i]
+            if in_str:
+                if esc:
+                    esc = False
+                elif ch == "\\":
+                    esc = True
+                elif ch == '"':
+                    in_str = False
+                continue
+            if ch == '"':
+                in_str = True
+                continue
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    candidates.insert(0, text[start : i + 1])
+                    break
+    m = re.search(r"\{[\s\S]*\}\s*$", text)
+    if m:
+        candidates.append(m.group(0))
+    # 去重保序
+    seen: set[str] = set()
+    out: list[str] = []
+    for c in candidates:
+        c = c.strip()
+        if c and c not in seen:
+            seen.add(c)
+            out.append(c)
+    return out
+
+
+def _parse_json_object(text: str) -> Any:
+    for candidate in _extract_json_candidate(text):
+        for variant in (candidate, _repair_json_text(candidate)):
+            try:
+                return json.loads(variant)
+            except json.JSONDecodeError:
+                continue
     return None
+
+
+def _outline_has_slides(data: Any) -> bool:
+    if not isinstance(data, dict):
+        return False
+    slides = data.get("slides") or data.get("pages") or data.get("outline")
+    return isinstance(slides, list) and len(slides) > 0
+
+
+def _normalize_outline_dict(data: Any) -> Any:
+    """兼容模型使用 pages / outline 等字段名或略异的 slide 结构。"""
+    if not isinstance(data, dict):
+        if isinstance(data, list):
+            return {"theme": {}, "slides": data}
+        return data
+    out = dict(data)
+    slides = out.get("slides")
+    if not isinstance(slides, list):
+        for key in ("pages", "outline", "slide_list", "content"):
+            alt = out.get(key)
+            if isinstance(alt, list):
+                slides = alt
+                break
+    if not isinstance(slides, list):
+        return out
+    norm_slides: list[dict[str, Any]] = []
+    for i, item in enumerate(slides):
+        if not isinstance(item, dict):
+            continue
+        slide = dict(item)
+        if "title" not in slide and slide.get("slide_title"):
+            slide["title"] = slide["slide_title"]
+        if "n" not in slide:
+            slide["n"] = i + 1
+        if "role" not in slide:
+            slide["role"] = "content"
+        bullets = slide.get("bullets")
+        if isinstance(bullets, str):
+            slide["bullets"] = [bullets]
+        elif bullets is None:
+            slide["bullets"] = []
+        norm_slides.append(slide)
+    out["slides"] = norm_slides
+    theme = out.get("theme")
+    if not isinstance(theme, dict):
+        out["theme"] = {}
+    return out
 
 
 def _extract_svg_document(text: str) -> str:
@@ -780,6 +940,44 @@ def _sanitize_svg_for_drawingml_export(svg: str) -> tuple[str, bool]:
 _MAAS_MIN_COMPLETION_TOKENS = 65536
 
 
+def _endpoint_uses_maas(endpoint: LLMEndpoint, settings: BridgeSettings) -> bool:
+    if settings.llm_maas_compat:
+        return True
+    low = (endpoint.base_url or "").lower()
+    return "modelarts-maas.com" in low or "/api/paas/" in low or "open.bigmodel.cn" in low
+
+
+def _chat_completions_url(base_url: str) -> str:
+    b = (base_url or "").strip().rstrip("/")
+    if not b:
+        return ""
+    low = b.lower()
+    if "modelarts-maas.com" in low:
+        b = re.sub(r"/v1/?$", "", b)
+    if (
+        "open.bigmodel.cn" in low
+        or "/api/paas/" in low
+        or "modelarts-maas.com" in low
+        or re.search(r"/v\d+$", b)
+    ):
+        return f"{b}/chat/completions"
+    return f"{b}/v1/chat/completions"
+
+
+def _message_text(msg: dict[str, Any]) -> str:
+    content = str(msg.get("content") or "").strip()
+    if content:
+        return _strip_llm_response_artifacts(content)
+    for key in ("reasoning_content", "reasoning", "output_text"):
+        alt = str(msg.get(key) or "").strip()
+        if alt:
+            parsed = _parse_json_object(alt)
+            if isinstance(parsed, dict):
+                return json.dumps(parsed, ensure_ascii=False)
+            return _strip_llm_response_artifacts(alt)
+    return ""
+
+
 async def _chat_text(
     endpoint: LLMEndpoint,
     settings: BridgeSettings,
@@ -787,10 +985,12 @@ async def _chat_text(
     *,
     json_mode: bool,
 ) -> str:
-    base = endpoint.base_url.rstrip("/")
-    url = f"{base}/chat/completions"
+    url = _chat_completions_url(endpoint.base_url)
+    if not url:
+        raise RuntimeError("无效的 LLM base_url")
+    maas = _endpoint_uses_maas(endpoint, settings)
     cap = max(0, int(settings.llm_max_output_tokens))
-    if settings.llm_maas_compat:
+    if maas:
         cap = max(cap, _MAAS_MIN_COMPLETION_TOKENS)
     payload: dict[str, Any] = {
         "model": endpoint.model,
@@ -799,14 +999,14 @@ async def _chat_text(
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
     if cap > 0:
-        if settings.llm_maas_compat:
+        if maas:
             payload["max_tokens"] = cap
             payload["max_completion_tokens"] = cap
         else:
             payload["max_completion_tokens"] = cap
-    if settings.llm_maas_compat and settings.llm_disable_thinking:
-        extra = {"chat_template_kwargs": {"enable_thinking": False}}
-        payload["extra_body"] = extra
+    disable_thinking = settings.llm_disable_thinking if settings.llm_maas_compat else maas
+    if maas and disable_thinking:
+        payload["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
     headers = {"Content-Type": "application/json"}
     if endpoint.api_key:
         headers["Authorization"] = f"Bearer {endpoint.api_key}"
@@ -817,7 +1017,10 @@ async def _chat_text(
         raise RuntimeError(f"LLM HTTP {resp.status_code}: {resp.text[:800]}")
     data = resp.json()
     try:
-        return str(data["choices"][0]["message"]["content"] or "")
+        msg = data["choices"][0]["message"]
+        if not isinstance(msg, dict):
+            raise TypeError("message is not dict")
+        return _message_text(msg)
     except (KeyError, IndexError, TypeError) as exc:
         raise RuntimeError(f"LLM 响应结构异常: {repr(data)[:800]}") from exc
 
