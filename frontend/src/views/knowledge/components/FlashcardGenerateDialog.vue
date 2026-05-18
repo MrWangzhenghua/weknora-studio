@@ -262,9 +262,9 @@ async function submit() {
   }
 }
 
-function confirmPurge(t: FlashcardGenTask, e?: Event) {
+function confirmPurge(taskItem: FlashcardGenTask, e?: Event) {
   e?.stopPropagation?.()
-  if (!TERMINAL.has(t.status)) {
+  if (!TERMINAL.has(taskItem.status)) {
     MessagePlugin.warning(t('flashcardGen.deleteNeedTerminal'))
     return
   }
@@ -276,14 +276,14 @@ function confirmPurge(t: FlashcardGenTask, e?: Event) {
     onConfirm: async () => {
       dlg.hide()
       try {
-        await purgeFlashcardGenTask(t.task_id)
+        await purgeFlashcardGenTask(taskItem.task_id)
         MessagePlugin.success(t('flashcardGen.deleteSuccess'))
-        if (task.value?.task_id === t.task_id) {
+        if (task.value?.task_id === taskItem.task_id) {
           task.value = null
           rightPanel.value = 'idle'
           stopPolling()
         }
-        tasks.value = tasks.value.filter((x) => x.task_id !== t.task_id)
+        tasks.value = tasks.value.filter((x) => x.task_id !== taskItem.task_id)
       } catch (err: any) {
         MessagePlugin.error(`${t('flashcardGen.deleteFail')}: ${err?.message || err}`)
       }

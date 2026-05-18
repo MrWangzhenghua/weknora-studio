@@ -338,9 +338,9 @@ async function cancel() {
   }
 }
 
-async function confirmPurge(t: PPTGenTask, e?: Event) {
+async function confirmPurge(taskItem: PPTGenTask, e?: Event) {
   e?.stopPropagation?.()
-  if (!TERMINAL.has(t.status)) {
+  if (!TERMINAL.has(taskItem.status)) {
     MessagePlugin.warning(t('pptGen.deleteNeedTerminal'))
     return
   }
@@ -352,13 +352,14 @@ async function confirmPurge(t: PPTGenTask, e?: Event) {
     onConfirm: async () => {
       dlg.hide()
       try {
-        await purgePPTGenTask(t.task_id)
+        await purgePPTGenTask(taskItem.task_id)
         MessagePlugin.success(t('pptGen.deleteSuccess'))
-        if (task.value?.task_id === t.task_id) {
+        if (task.value?.task_id === taskItem.task_id) {
           task.value = null
           rightPanel.value = 'idle'
           revokePreview()
         }
+        tasks.value = tasks.value.filter((x) => x.task_id !== taskItem.task_id)
         await refreshList(false)
       } catch (err: any) {
         MessagePlugin.error(`${t('pptGen.deleteFail')}: ${err?.message || err}`)
