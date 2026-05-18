@@ -232,11 +232,9 @@ func (s *FlashcardGenService) runGeneration(
 		WeKnoraKBID:     kbID,
 		WeKnoraUserID:   userID,
 	}
+	// 未在前端选择对话模型时，不向 Bridge 下发 flash_llm_*，由容器内 FLASHCARD_LLM_*（.env）提供默认端点。
+	// 避免误用知识库绑定的华为 MaaS 等与闪卡 .env 不一致的模型。
 	fcReq := *req
-	if strings.TrimSpace(fcReq.LLMModelID) == "" && strings.TrimSpace(kb.SummaryModelID) != "" {
-		fcReq.LLMModelID = strings.TrimSpace(kb.SummaryModelID)
-		logger.Infof(ctx, "[flashcard] using knowledge base SummaryModelID as LLM fallback: kb=%s model=%s", kbID, fcReq.LLMModelID)
-	}
 	if err := s.applyFlashModelToMeta(ctx, &fcReq, meta); err != nil {
 		closeBridgeFiles(files)
 		return nil, stats, err

@@ -75,16 +75,26 @@ def _normalize_base_url(url: str) -> str:
     return u
 
 
+def _is_maas_openai_base(base_url: str) -> bool:
+    low = (base_url or "").lower()
+    return "modelarts-maas.com" in low or "/api/paas/" in low or "open.bigmodel.cn" in low
+
+
 def _chat_completions_url(base_url: str) -> str:
+    """拼接 Chat Completions URL（与 pptmaster_bridge 一致：版本号已在 base 内时只加 /chat/completions）。"""
     b = _normalize_base_url(base_url)
     if not b:
         return ""
     low = b.lower()
-    # 智谱 BigModel：base 已是 .../api/paas/v4，应接 /chat/completions；
-    # 若误接 /v1/chat/completions 会得到 404（日志里即此情况）。
-    if "open.bigmodel.cn" in low or "/api/paas/" in low:
-        return f"{b}/chat/completions"
-    if "/v1" in b:
+    if "modelarts-maas.com" in low:
+        # 常见误配 .../v2/v1 -> 规范为 .../v2
+        b = re.sub(r"/v1/?$", "", b)
+    if (
+        "open.bigmodel.cn" in low
+        or "/api/paas/" in low
+        or "modelarts-maas.com" in low
+        or re.search(r"/v\d+$", b)
+    ):
         return f"{b}/chat/completions"
     return f"{b}/v1/chat/completions"
 
@@ -157,6 +167,7 @@ async def generate_flashcards_from_context(
     url = _chat_completions_url(base)
     if not url:
         raise ValueError("无效的 LLM base_url")
+    logger.info("flashcard LLM url=%s model=%s", url, model)
 
     lang_hint = "请全部使用简体中文。" if language.lower().startswith("zh") else "Please answer in English."
 
@@ -182,7 +193,15 @@ async def generate_flashcards_from_context(
         "temperature": 0.4,
     }
     if settings.llm_max_output_tokens > 0:
-        payload["max_tokens"] = settings.llm_max_output_tokens
+        cap = settings.llm_max_output_tokens
+        if _is_maas_openai_base(base):
+            cap = max(cap, 8192)
+        payload["max_tokens"] = cap
+        if _is_maas_openai_base(base):
+            payload["max_completion_tokens"] = cap
+
+    if _is_maas_openai_base(base):
+        payload["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
 
     headers = {
         "Authorization": f"Bearer {api_key}",

@@ -117,8 +117,11 @@ async def generate_flashcards(
                 status_code=502,
                 detail=f"上游 LLM 暂不可用({code})，请稍后重试。",
             ) from e
-        logger.exception("flashcard generate failed")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        req_url = str(e.request.url) if e.request else ""
+        body_snip = (e.response.text or "")[:300]
+        detail = f"上游 LLM HTTP {code} url={req_url} {body_snip}".strip()
+        logger.exception("flashcard generate failed: %s", detail)
+        raise HTTPException(status_code=500, detail=detail) from e
     except Exception as e:
         logger.exception("flashcard generate failed")
         raise HTTPException(status_code=500, detail=str(e)) from e
